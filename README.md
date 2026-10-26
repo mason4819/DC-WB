@@ -8,7 +8,8 @@
 - **歡迎系統**：指定頻道、自訂訊息、純文字 / Embed、可選歡迎圖片（頭像、名稱、伺服器名稱、成員數）
 - **離開系統**：指定頻道、自訂訊息、純文字 / Embed
 - **自動身分組**：每個伺服器獨立設定；權限不足時不會崩潰，並會在頻道提醒管理員
-- **歡迎圖片**：1200×500，圓形頭像、深色圓角卡片
+- **歡迎圖片**：1200×406，圓形頭像、深色圓角卡片；內建多種備援字型，特殊字元、花體字、Emoji 名稱都不會變成方塊
+- **全中文介面**：所有 Slash 指令、選項與機器人回覆都是中文
 - **訊息變數**：`{user}` `{username}` `{displayname}` `{server}` `{member_count}` `{user_id}`
 - 所有設定存在 SQLite，重啟後保留；每個伺服器完全獨立
 
@@ -92,35 +93,46 @@ python bot.py
 
 ## 9. Slash Command 使用方式
 
-訊息中可用 `\n` 換行。
+所有指令都是中文，輸入 `/歡迎`、`/離開`、`/自動身分組`、`/設定` 後 Discord 會自動列出選項。訊息內容中可用 `
+` 換行。
 
 | 指令 | 說明 |
 | --- | --- |
-| `/welcome setup channel [message] [style] [image]` | 一次完成：啟用 + 指定頻道（+ 訊息 / 樣式 / 圖片） |
-| `/welcome enable` · `/welcome disable` | 啟用 / 停用歡迎系統 |
-| `/welcome channel channel` | 更換歡迎頻道 |
-| `/welcome message [text] [style]` | 設定訊息與樣式（Plain text / Embed）；不帶參數則顯示目前設定 |
-| `/welcome image [enabled] [background] [reset]` | 開關圖片、上傳背景（PNG/JPG，5MB 內）、`reset` 還原預設背景 |
-| `/welcome test` | 把測試歡迎訊息送到歡迎頻道（以你自己當作新成員） |
-| `/welcome preview` | 只有你看得到的預覽 |
-| `/leave setup channel [message] [style]` | 啟用離開系統並指定頻道 |
-| `/leave enable` · `/leave disable` · `/leave channel` · `/leave message` · `/leave test` | 對應離開系統 |
-| `/autorole set role` | 設定新成員自動取得的身分組（並自動啟用） |
-| `/autorole remove` · `/autorole enable` · `/autorole disable` | 移除 / 啟用 / 停用 |
-| `/config` | 顯示全部設定，並列出偵測到的權限問題 |
+| `/歡迎 快速設定 頻道 [訊息] [樣式] [圖片]` | 一次完成：啟用 + 指定頻道（+ 訊息 / 樣式 / 圖片） |
+| `/歡迎 啟用` · `/歡迎 停用` | 啟用 / 停用歡迎系統 |
+| `/歡迎 頻道 頻道` | 更換歡迎頻道 |
+| `/歡迎 訊息 [內容] [樣式]` | 設定訊息與樣式（嵌入式訊息 / 純文字）；不填則顯示目前設定 |
+| `/歡迎 圖片 [啟用] [背景] [還原預設]` | 開關歡迎圖片、上傳自訂背景（PNG/JPG，5MB 內）、還原預設背景 |
+| `/歡迎 測試` | 把測試歡迎訊息發送到歡迎頻道（以你自己當作新成員） |
+| `/歡迎 預覽` | 只有你看得到的預覽 |
+| `/離開 快速設定 頻道 [訊息] [樣式]` | 啟用離開系統並指定頻道 |
+| `/離開 啟用` · `/離開 停用` · `/離開 頻道` · `/離開 訊息` · `/離開 測試` | 對應離開系統 |
+| `/自動身分組 設定 身分組` | 設定新成員自動取得的身分組（並自動啟用） |
+| `/自動身分組 移除` · `/自動身分組 啟用` · `/自動身分組 停用` | 移除 / 啟用 / 停用 |
+| `/設定` | 顯示全部設定，並列出偵測到的權限問題 |
 
 範例：
 
 ```
-/welcome setup channel:#welcome message:歡迎 {user} 加入 {server}！你是第 {member_count} 位成員。 style:Embed image:True
+/歡迎 快速設定 頻道:#歡迎 訊息:歡迎 {user} 加入 {server}！你是第 {member_count} 位成員。 樣式:嵌入式訊息 (Embed) 圖片:True
 ```
 
 ### 歡迎圖片版面（預設橫幅）
 
-- 上方紅色橫條與楓葉不被遮擋；左側深色圓角卡片放圓形頭像、`WELCOME`、使用者名稱、`to 伺服器名稱`、`Member #成員數`
+- 尺寸 1200×406，與預設橫幅比例相同，不會變形
+- 上方紅色橫條與楓葉不被遮擋；左側深色圓角卡片放圓形頭像、`WELCOME`、顯示名稱、`歡迎加入 伺服器名稱`、`第 N 位成員`
 - 卡片停在 x=900，不會蓋住右下角的 Logo
-- 背景完整延伸至圖片底部；左側卡片不會蓋住右下角的 Logo
-- 預設背景：`assets/backgrounds/default.png`
+- 預設背景：`assets/backgrounds/default.png`，可用 `/歡迎 圖片 背景:` 為各伺服器換成自己的圖
+
+### 特殊字元與備援字型
+
+Discord 名稱常含花體字、符號、Emoji 或其他語言。程式會：
+
+1. 先把花體字轉成一般字母（例如 `𝓜𝓪𝓼𝓸𝓷` → `Mason`），並移除組合符號與零寬字元
+2. 逐字挑選 `assets/fonts/` 內**真的有該字形**的字型來畫：繁中 → 簡中 → 日文 → 韓文 → 符號 → 特殊符號 → Emoji（單色）
+3. 所有字型都沒有的字會直接略過，不會畫出方塊；整個名稱都畫不出來時，改用帳號名稱
+
+想支援更多文字（阿拉伯文、泰文等）：把對應的 Noto Sans `.ttf` / `.otf` 放進 `assets/fonts/` 即可，程式會自動使用，不用改程式碼。字型只有用到時才會載入，不會增加平常的記憶體用量。
 
 ## 10. 權限設定
 
@@ -132,13 +144,13 @@ python bot.py
 
 **Slash Commands 沒有出現？** 確認邀請時勾了 `applications.commands`、`SYNC_COMMANDS=true`，等 1–2 分鐘或重開 Discord。
 
-**歡迎訊息沒有送出？** 執行 `/config` 看「Problems found」，或 `/welcome test` 會直接顯示原因。
+**歡迎訊息沒有送出？** 執行 `/設定` 看「Problems found」，或 `/歡迎 測試` 會直接顯示原因。
 
 **沒有 Embed Links / Attach Files 權限？** 自動改用純文字或略過圖片，不會崩潰。
 
 **自動身分組失敗？** 多半是機器人身分組排在目標身分組下方，或缺少 Manage Roles。程式會在歡迎頻道（或系統頻道）提醒管理員，每 6 小時最多一次。
 
-**中文名稱變成方塊？** `assets/fonts/` 已附 Noto Sans TC（SIL OFL 授權）。換字型請放含中文字形的單一 `.ttf` / `.otf`，檔名含 `Bold` 的用於粗體。
+**名稱出現方塊或缺字？** 已內建 Noto Sans 繁中 / 簡中 / 日文 / 韓文 / 符號 / Emoji（SIL OFL 授權）。仍缺的文字種類，請把對應字型放進 `assets/fonts/`，詳見第 9 節。檔名含 `Bold` 的檔案會用於粗體。
 
 **資料表** `database.init_db()` 每次啟動執行 `CREATE TABLE IF NOT EXISTS`：`guild_settings`、`welcome_settings`、`leave_settings`、`autorole_settings`。
 
@@ -171,7 +183,7 @@ python bot.py
 > ⚠️ **免費版不會保存資料**
 > Render 免費方案的檔案系統是暫時的。每次重新部署（包含推送 GitHub 觸發的自動部署）或平台重啟，`bot.db` 與上傳的自訂背景都會消失，所有伺服器要重新設定。
 > - **付費方案 + Persistent Disk**（Starter 加 1GB 磁碟）：在 `render.yaml` 取消註解 `disk` 與 `DATA_DIR=/var/data`，資料就會永久保留。
-> - 使用免費版：設定只需幾個指令就能重建（`/welcome setup ...`），並盡量避免頻繁推送程式碼。
+> - 使用免費版：設定只需幾個指令就能重建（`/歡迎 快速設定 ...`），並盡量避免頻繁推送程式碼。
 
 免費方案每月 750 小時，剛好夠一個服務 24 小時運行；RAM 同為 512MB。
 
@@ -188,6 +200,6 @@ WelcomeBot/
 ├── .env.example
 ├── cogs/               # welcome.py, leave.py, autorole.py, settings.py
 ├── utils/              # image.py, formatter.py, messaging.py
-├── assets/             # backgrounds/default.png, fonts/（Noto Sans TC）
+├── assets/             # backgrounds/default.png, fonts/（Noto Sans 多語系備援字型）
 └── data/               # bot.db 與自訂背景（自動建立）
 ```

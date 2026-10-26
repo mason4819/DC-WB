@@ -30,13 +30,13 @@ DEFAULT_BACKGROUND = ASSETS_DIR / "backgrounds" / "default.png"
 
 # --- Welcome image ---------------------------------------------------------
 IMAGE_WIDTH = 1200
-IMAGE_HEIGHT = 500
+IMAGE_HEIGHT = 406                                      # same ratio as the default banner (500x169)
 MAX_BACKGROUND_BYTES = 5 * 1024 * 1024                  # 5 MB upload limit
 MAX_BACKGROUND_PIXELS = 12_000_000                      # protects RAM when decoding uploads
 
 # --- Message defaults and limits -------------------------------------------
-DEFAULT_WELCOME_MESSAGE = "Welcome {user} to {server}! You are member #{member_count}."
-DEFAULT_LEAVE_MESSAGE = "{username} has left {server}. We now have {member_count} members."
+DEFAULT_WELCOME_MESSAGE = "歡迎 {user} 加入 {server}！你是第 {member_count} 位成員。"
+DEFAULT_LEAVE_MESSAGE = "{username} 離開了 {server}，目前共有 {member_count} 位成員。"
 MAX_MESSAGE_LENGTH = 1000
 
 # --- Embed colours ---------------------------------------------------------

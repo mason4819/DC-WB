@@ -30,17 +30,17 @@ class BotTree(app_commands.CommandTree):
     async def on_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
         command_name = interaction.command.qualified_name if interaction.command else "unknown"
         if isinstance(error, app_commands.MissingPermissions):
-            text = "You need the **Manage Server** or **Administrator** permission to use this command."
+            text = "你需要「管理伺服器」或「管理員」權限才能使用這個指令。"
         elif isinstance(error, app_commands.NoPrivateMessage):
-            text = "This command can only be used inside a server."
+            text = "這個指令只能在伺服器內使用。"
         elif isinstance(error, app_commands.CheckFailure):
-            text = "You are not allowed to use this command."
+            text = "你沒有使用這個指令的權限。"
         elif isinstance(error, app_commands.CommandInvokeError) and isinstance(error.original, sqlite3.Error):
             log.error("Database error in /%s", command_name, exc_info=error.original)
-            text = "I could not read or save the settings just now. Please try again."
+            text = "目前無法讀取或儲存設定，請稍後再試。"
         else:
             log.error("Unhandled error in /%s", command_name, exc_info=error)
-            text = "Something went wrong while running that command. Please try again in a moment."
+            text = "執行指令時發生錯誤，請稍後再試。"
         try:
             if interaction.response.is_done():
                 await interaction.followup.send(text, ephemeral=True)

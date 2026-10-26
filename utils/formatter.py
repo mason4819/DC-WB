@@ -4,6 +4,7 @@ import re
 import discord
 
 VARIABLES_HELP = "{user} {username} {displayname} {server} {member_count} {user_id}"
+VARIABLES_DESCRIPTION = "{user}提及成員 {username}帳號 {displayname}顯示名稱 {server}伺服器 {member_count}成員數 {user_id}成員ID"
 
 # Only these exact placeholders are replaced, so stray braces never raise errors.
 _PATTERN = re.compile(r"\{(user|username|displayname|server|member_count|user_id)\}")

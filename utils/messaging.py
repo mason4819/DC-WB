@@ -9,8 +9,8 @@ from discord.ext import commands
 log = logging.getLogger(__name__)
 
 STYLE_CHOICES = [
-    app_commands.Choice(name="Embed", value="embed"),
-    app_commands.Choice(name="Plain text", value="text"),
+    app_commands.Choice(name="嵌入式訊息 (Embed)", value="embed"),
+    app_commands.Choice(name="純文字", value="text"),
 ]
 
 
@@ -59,14 +59,14 @@ async def get_bot_member(bot: commands.Bot, guild: discord.Guild) -> Optional[di
 def role_problem(me: discord.Member, role: discord.Role) -> Optional[str]:
     """Explain why the bot cannot hand out a role, or return None if it can."""
     if role.is_default():
-        return "@everyone cannot be used as an auto role."
+        return "@everyone 不能當作自動身分組。"
     if role.managed:
-        return f"{role.mention} is managed by an integration and cannot be assigned manually."
+        return f"{role.mention} 是由整合服務管理的身分組，無法手動發放。"
     if not me.guild_permissions.manage_roles:
-        return "I am missing the **Manage Roles** permission."
+        return "機器人缺少「管理身分組」權限。"
     if role >= me.top_role:
-        return (f"{role.mention} is higher than or equal to my highest role. "
-                "Move my role above it in Server Settings > Roles.")
+        return (f"{role.mention} 的位置高於或等於機器人的最高身分組，"
+                "請到「伺服器設定 > 身分組」把機器人的身分組拖到它上面。")
     return None
 
 
@@ -74,18 +74,18 @@ async def channel_warnings(bot: commands.Bot, channel: Optional[discord.abc.Guil
                            embeds: bool, files: bool) -> list[str]:
     """List permission problems that would stop messages from arriving in a channel."""
     if not isinstance(channel, discord.TextChannel):
-        return ["The configured channel no longer exists. Choose a new one with the channel command."]
+        return ["設定的頻道已經不存在，請用「頻道」指令重新選擇。"]
     me = await get_bot_member(bot, channel.guild)
     if me is None:
-        return ["I could not check my permissions in this server."]
+        return ["無法確認機器人在這個伺服器的權限。"]
     perms = channel.permissions_for(me)
     if not (perms.view_channel and perms.send_messages):
-        return [f"I cannot post in {channel.mention}. Grant me **View Channel** and **Send Messages** there."]
+        return [f"機器人無法在 {channel.mention} 發言，請給予「檢視頻道」與「發送訊息」權限。"]
     notes = []
     if embeds and not perms.embed_links:
-        notes.append(f"I am missing **Embed Links** in {channel.mention}; plain text will be used instead.")
+        notes.append(f"機器人在 {channel.mention} 缺少「嵌入連結」權限，將改用純文字發送。")
     if files and not perms.attach_files:
-        notes.append(f"I am missing **Attach Files** in {channel.mention}; the image will be skipped.")
+        notes.append(f"機器人在 {channel.mention} 缺少「附加檔案」權限，將略過歡迎圖片。")
     return notes
 
 
@@ -117,29 +117,29 @@ async def deliver(*, bot: commands.Bot, guild: discord.Guild, channel_id: Option
     """
     channel = guild.get_channel(channel_id) if channel_id else None
     if not isinstance(channel, discord.TextChannel):
-        return False, ["The configured channel no longer exists. Choose a new one with the channel command."]
+        return False, ["設定的頻道已經不存在，請用「頻道」指令重新選擇。"]
 
     me = await get_bot_member(bot, guild)
     if me is None:
-        return False, ["I could not check my permissions in this server."]
+        return False, ["無法確認機器人在這個伺服器的權限。"]
 
     perms = channel.permissions_for(me)
     if not (perms.view_channel and perms.send_messages):
-        return False, [f"I cannot post in {channel.mention}. Grant me **View Channel** and **Send Messages** there."]
+        return False, [f"機器人無法在 {channel.mention} 發言，請給予「檢視頻道」與「發送訊息」權限。"]
 
     notes: list[str] = []
     if use_embed and not perms.embed_links:
         use_embed = False
-        notes.append(f"I am missing **Embed Links** in {channel.mention}, so I sent plain text instead.")
+        notes.append(f"機器人在 {channel.mention} 缺少「嵌入連結」權限，已改用純文字發送。")
 
     file: Optional[discord.File] = None
     if make_image is not None:
         if not perms.attach_files:
-            notes.append(f"I am missing **Attach Files** in {channel.mention}, so the image was skipped.")
+            notes.append(f"機器人在 {channel.mention} 缺少「附加檔案」權限，已略過歡迎圖片。")
         else:
             file = await make_image()
             if file is None:
-                notes.append("The welcome image could not be generated, so it was skipped.")
+                notes.append("歡迎圖片產生失敗，已略過圖片。")
 
     kwargs = build_message_kwargs(user, text, use_embed, colour, file)
     kwargs["allowed_mentions"] = (discord.AllowedMentions(users=[user], roles=False, everyone=False)
@@ -147,10 +147,10 @@ async def deliver(*, bot: commands.Bot, guild: discord.Guild, channel_id: Option
     try:
         await channel.send(**kwargs)
     except discord.Forbidden:
-        return False, [f"Discord refused to let me post in {channel.mention}. Check my channel permissions."]
+        return False, [f"Discord 拒絕機器人在 {channel.mention} 發言，請檢查頻道權限。"]
     except discord.NotFound:
-        return False, ["The configured channel was deleted. Choose a new one with the channel command."]
+        return False, ["設定的頻道已被刪除，請用「頻道」指令重新選擇。"]
     except discord.HTTPException as exc:
         log.warning("Discord API error while posting in guild %s: %s", guild.id, exc)
-        return False, [f"Discord returned an error ({exc.status}). Please try again later."]
+        return False, [f"Discord 回傳錯誤（{exc.status}），請稍後再試。"]
     return True, notes

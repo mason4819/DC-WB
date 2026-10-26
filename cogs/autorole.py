@@ -16,7 +16,7 @@ NOTICE_COOLDOWN = 6 * 60 * 60  # post at most one problem notice per server ever
 
 
 class AutoRoleCog(commands.Cog, name="AutoRole"):
-    autorole = AdminGroup(name="autorole", description="Configure the automatic role for new members")
+    autorole = AdminGroup(name="自動身分組", description="設定新成員加入時自動取得的身分組")
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -33,21 +33,19 @@ class AutoRoleCog(commands.Cog, name="AutoRole"):
 
             role = guild.get_role(settings["role_id"])
             if role is None:
-                await self._notify(guild, "The configured auto role no longer exists. "
-                                          "Choose a new one with `/autorole set`.")
+                await self._notify(guild, "設定的自動身分組已經不存在，請用 `/自動身分組 設定` 重新選擇。")
                 return
 
             me = await get_bot_member(self.bot, guild)
-            problem = role_problem(me, role) if me else "I could not check my own permissions."
+            problem = role_problem(me, role) if me else "無法確認機器人自己的權限。"
             if problem:
-                await self._notify(guild, f"I could not give {role.mention} to {member.mention}. {problem}")
+                await self._notify(guild, f"無法把 {role.mention} 發給 {member.mention}。{problem}")
                 return
 
             try:
                 await member.add_roles(role, reason="Auto role on join")
             except discord.Forbidden:
-                await self._notify(guild, f"Discord refused to let me give {role.mention}. "
-                                          "Check my **Manage Roles** permission and role order.")
+                await self._notify(guild, f"Discord 拒絕發放 {role.mention}，請檢查機器人的「管理身分組」權限與身分組順序。")
             except discord.NotFound:
                 log.info("Member %s left before the auto role was applied", member.id)
             except discord.HTTPException:
@@ -77,51 +75,52 @@ class AutoRoleCog(commands.Cog, name="AutoRole"):
         if channel is None:
             return
         try:
-            await channel.send(f"⚠️ **Auto role problem:** {text}\n"
-                               "*(Only admins need to act on this. It is shown at most once every 6 hours.)*",
+            await channel.send(f"⚠️ **自動身分組發生問題：**{text}\n"
+                               "*（這則提醒給管理員看，每 6 小時最多出現一次。）*",
                                allowed_mentions=discord.AllowedMentions.none())
         except discord.HTTPException:
             log.info("Could not post the auto role notice in guild %s", guild.id)
 
     # --------------------------------------------------------------- commands
-    @autorole.command(name="set", description="Choose the role new members receive")
-    @app_commands.describe(role="Role to give to every new member")
+    @autorole.command(name="設定", description="選擇新成員加入時自動取得的身分組")
+    @app_commands.describe(role="要發給每位新成員的身分組")
+    @app_commands.rename(role="身分組")
     async def autorole_set(self, interaction: discord.Interaction, role: discord.Role) -> None:
         if role.is_default() or role.managed:
-            await reply(interaction, "❌ That role cannot be assigned by a bot. Please pick a regular role.")
+            await reply(interaction, "❌ 機器人無法發放這個身分組，請選擇一般的身分組。")
             return
         database.update_settings("autorole", interaction.guild_id, role_id=role.id, enabled=1)
         me = await get_bot_member(self.bot, interaction.guild)
         problem = role_problem(me, role) if me else None
-        text = f"✅ New members will receive {role.mention}."
+        text = f"✅ 新成員會自動取得 {role.mention}。"
         if problem:
-            text += f"\n⚠️ It will not work yet: {problem}"
+            text += f"\n⚠️ 目前還無法運作：{problem}"
         await reply(interaction, text)
 
-    @autorole.command(name="remove", description="Remove the auto role setting")
+    @autorole.command(name="移除", description="移除自動身分組設定")
     async def autorole_remove(self, interaction: discord.Interaction) -> None:
         database.update_settings("autorole", interaction.guild_id, role_id=None, enabled=0)
-        await reply(interaction, "✅ The auto role was removed. New members will not receive a role.")
+        await reply(interaction, "✅ 已移除自動身分組，新成員不會再自動取得身分組。")
 
-    @autorole.command(name="enable", description="Enable the auto role")
+    @autorole.command(name="啟用", description="啟用自動身分組")
     async def autorole_enable(self, interaction: discord.Interaction) -> None:
         settings = database.get_settings("autorole", interaction.guild_id)
         role = interaction.guild.get_role(settings["role_id"]) if settings["role_id"] else None
         if role is None:
-            await reply(interaction, "❌ No auto role is set. Use `/autorole set` first.")
+            await reply(interaction, "❌ 還沒有設定身分組，請先用 `/自動身分組 設定`。")
             return
         database.update_settings("autorole", interaction.guild_id, enabled=1)
         me = await get_bot_member(self.bot, interaction.guild)
         problem = role_problem(me, role) if me else None
-        text = f"✅ The auto role is enabled ({role.mention})."
+        text = f"✅ 自動身分組已啟用（{role.mention}）。"
         if problem:
-            text += f"\n⚠️ It will not work yet: {problem}"
+            text += f"\n⚠️ 目前還無法運作：{problem}"
         await reply(interaction, text)
 
-    @autorole.command(name="disable", description="Disable the auto role")
+    @autorole.command(name="停用", description="停用自動身分組")
     async def autorole_disable(self, interaction: discord.Interaction) -> None:
         database.update_settings("autorole", interaction.guild_id, enabled=0)
-        await reply(interaction, "✅ The auto role is disabled. The selected role is kept.")
+        await reply(interaction, "✅ 自動身分組已停用，選好的身分組會保留。")
 
 
 async def setup(bot: commands.Bot) -> None:

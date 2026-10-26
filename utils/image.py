@@ -1,16 +1,22 @@
 """Welcome image generation with Pillow.
 
-Layout (1200x500):
-  - Full canvas: banner background (default banner, custom upload, or a gradient).
-  - A dark rounded card on the left holds the avatar, WELCOME, username,
+Layout (1200x406, the same ratio as the default banner):
+  - Background banner (default banner, custom upload, or a simple gradient).
+  - A dark rounded card on the left holds the avatar, WELCOME, display name,
     server name and member number. The card stops at x=900 so it never covers
     the logo in the bottom-right corner of the default banner.
+
+Names from Discord can contain fancy Unicode, emoji or symbols. Text is
+normalised and every character is drawn with the first font in assets/fonts
+that really has a glyph for it, so no "tofu" boxes appear. Characters that no
+font supports are dropped instead of being drawn as boxes.
 
 Every image object is closed as soon as it is no longer needed and nothing
 is cached, so memory is released right after each render.
 """
 import io
 import logging
+import unicodedata
 from pathlib import Path
 from typing import Optional
 
@@ -21,6 +27,7 @@ import config
 log = logging.getLogger(__name__)
 
 RESAMPLE = Image.Resampling.LANCZOS
+
 W, H = config.IMAGE_WIDTH, config.IMAGE_HEIGHT
 
 # --- Layout constants ------------------------------------------------------
@@ -37,64 +44,153 @@ SOFT_WHITE = (232, 235, 242, 255)
 SOFT_RED = (255, 118, 126, 255)
 DARK = (14, 16, 22, 255)
 
+# Font families are tried in this order. Any other font file placed in
+# assets/fonts is tried afterwards (alphabetical), so adding a font is just
+# copying a .ttf/.otf file into that folder.
+FONT_PRIORITY = ("NotoSansTC", "NotoSansSC", "NotoSansJP", "NotoSansKR",
+                 "NotoSansSymbols", "NotoSansSymbols2", "NotoEmoji")
+
+Glyph = tuple[str, ImageFont.FreeTypeFont]
+
 
 class BackgroundError(ValueError):
     """Raised when an uploaded background cannot be used."""
 
 
 # --- Fonts -----------------------------------------------------------------
-def _font_path(bold: bool) -> Optional[Path]:
-    """Pick a font file from assets/fonts, preferring the requested weight."""
+def _family(path: Path) -> str:
+    return path.stem.split("-")[0].split("[")[0]
+
+
+def _font_paths(bold: bool) -> list[Path]:
+    """One file per font family, ordered by priority. Uses the bold file if one exists."""
     if not config.FONT_DIR.is_dir():
+        return []
+    families: dict[str, list[Path]] = {}
+    for path in sorted(config.FONT_DIR.iterdir()):
+        if path.suffix.lower() in {".ttf", ".otf"}:
+            families.setdefault(_family(path), []).append(path)
+
+    chosen: dict[str, Path] = {}
+    for name, files in families.items():
+        bold_files = [p for p in files if "bold" in p.stem.lower()]
+        plain_files = [p for p in files if "bold" not in p.stem.lower()]
+        chosen[name] = (bold_files or plain_files)[0] if bold else (plain_files or bold_files)[0]
+
+    ordered = [chosen[name] for name in FONT_PRIORITY if name in chosen]
+    ordered += [path for name, path in chosen.items() if name not in FONT_PRIORITY]
+    return ordered
+
+
+class _FontSet:
+    """Fonts for one weight and size. Faces are opened lazily, only when a character needs them."""
+
+    def __init__(self, bold: bool, size: int) -> None:
+        self.size = size
+        self._paths = _font_paths(bold)
+        self._fonts: dict[int, Optional[ImageFont.FreeTypeFont]] = {}
+        self._notdef: dict[int, bytes] = {}
+        self._support: dict[tuple[int, str], bool] = {}
+        self.primary = self._open(0)
+        if self.primary is None:
+            self.primary = ImageFont.load_default(size)  # no CJK glyphs, but never crashes
+
+    def _open(self, index: int) -> Optional[ImageFont.FreeTypeFont]:
+        if index >= len(self._paths):
+            return None
+        if index not in self._fonts:
+            try:
+                self._fonts[index] = ImageFont.truetype(str(self._paths[index]), self.size)
+            except OSError:
+                log.warning("Could not load font %s", self._paths[index])
+                self._fonts[index] = None
+        return self._fonts[index]
+
+    def _has_glyph(self, index: int, font: ImageFont.FreeTypeFont, ch: str) -> bool:
+        """A character is missing if it renders exactly like an unassigned code point."""
+        key = (index, ch)
+        if key not in self._support:
+            if index not in self._notdef:
+                self._notdef[index] = bytes(font.getmask("\uffff"))
+            self._support[key] = bytes(font.getmask(ch)) != self._notdef[index]
+        return self._support[key]
+
+    def font_for(self, ch: str) -> Optional[ImageFont.FreeTypeFont]:
+        """First font that really contains this character, or None."""
+        if ch == " ":
+            return self.primary
+        for index in range(len(self._paths)):
+            font = self._open(index)
+            if font is not None and self._has_glyph(index, font, ch):
+                return font
         return None
-    files = sorted(p for p in config.FONT_DIR.iterdir() if p.suffix.lower() in {".ttf", ".otf"})
-    if not files:
-        return None
-    is_bold = [p for p in files if "bold" in p.stem.lower()]
-    not_bold = [p for p in files if "bold" not in p.stem.lower()]
-    preferred = (is_bold or not_bold) if bold else (not_bold or is_bold)
-    return preferred[0]
+
+    def layout(self, text: str) -> list[Glyph]:
+        glyphs: list[Glyph] = []
+        for ch in text:
+            font = self.font_for(ch)
+            if font is not None:
+                glyphs.append((ch, font))
+        return glyphs
+
+    def baseline(self, centre_y: float) -> float:
+        """Baseline that vertically centres text of the primary font on centre_y."""
+        ascent, descent = self.primary.getmetrics()
+        return centre_y + (ascent - descent) / 2
 
 
-def _load_font(bold: bool, size: int) -> ImageFont.FreeTypeFont:
-    path = _font_path(bold)
-    if path is not None:
-        try:
-            return ImageFont.truetype(str(path), size)
-        except OSError:
-            log.warning("Could not load font %s, using the built-in font", path)
-    return ImageFont.load_default(size)  # no CJK glyphs, but never crashes
+def sanitize_text(text: str) -> str:
+    """Normalise fancy Unicode and drop characters that cannot be drawn sensibly.
+
+    NFKC turns styled letters (e.g. mathematical script, full-width) into plain ones.
+    Combining marks, zero-width characters and control characters are removed.
+    """
+    text = unicodedata.normalize("NFKC", text)
+    kept = [ch for ch in text if unicodedata.category(ch) not in {"Cc", "Cf", "Mn", "Me", "Cs", "Cn"}]
+    return " ".join("".join(kept).split())
 
 
-def _text_width(font: ImageFont.FreeTypeFont, text: str, spacing: int = 0) -> float:
-    if spacing == 0:
-        return font.getlength(text)
-    return sum(font.getlength(ch) for ch in text) + spacing * max(len(text) - 1, 0)
+def _glyphs_width(glyphs: list[Glyph], spacing: int = 0) -> float:
+    return sum(font.getlength(ch) for ch, font in glyphs) + spacing * max(len(glyphs) - 1, 0)
 
 
 def _fit_text(bold: bool, text: str, base_size: int, max_width: int, min_size: int,
-              spacing: int = 0) -> tuple[ImageFont.FreeTypeFont, str]:
+              spacing: int = 0) -> tuple[_FontSet, list[Glyph]]:
     """Shrink the font until the text fits; add an ellipsis if it still does not."""
     size = base_size
     while True:
-        font = _load_font(bold, size)
-        width = _text_width(font, text, spacing)
+        fonts = _FontSet(bold, size)
+        glyphs = fonts.layout(text)
+        width = _glyphs_width(glyphs, spacing)
         if width <= max_width:
-            return font, text
+            return fonts, glyphs
         if size <= min_size:
             break
         size = max(min_size, min(size - 2, int(size * max_width / width)))
-    while len(text) > 1 and _text_width(font, text + "…", spacing) > max_width:
-        text = text[:-1]
-    return font, text.rstrip() + "…"
+
+    ellipsis = fonts.layout("…") or fonts.layout("...")
+    while glyphs and _glyphs_width(glyphs + ellipsis, spacing) > max_width:
+        glyphs.pop()
+    return fonts, glyphs + ellipsis
 
 
-def _draw_spaced(draw: ImageDraw.ImageDraw, x: float, y: float, text: str,
-                 font: ImageFont.FreeTypeFont, fill, spacing: int) -> None:
-    """Draw text left-aligned (vertically centred on y) with extra letter spacing."""
-    for ch in text:
-        draw.text((x, y), ch, font=font, fill=fill, anchor="lm")
+def _draw_glyphs(draw: ImageDraw.ImageDraw, x: float, baseline: float, glyphs: list[Glyph],
+                 fill, spacing: int = 0) -> None:
+    """Draw glyph by glyph on a shared baseline so mixed fonts line up."""
+    for ch, font in glyphs:
+        draw.text((x, baseline), ch, font=font, fill=fill, anchor="ls")
         x += font.getlength(ch) + spacing
+
+
+def _draw_line(draw: ImageDraw.ImageDraw, x: float, centre_y: float, text: str, bold: bool,
+               base_size: int, min_size: int, fill, max_width: int = TEXT_MAX_WIDTH,
+               spacing: int = 0) -> bool:
+    """Fit and draw one line. Returns False if nothing drawable was left."""
+    fonts, glyphs = _fit_text(bold, text, base_size, max_width, min_size, spacing)
+    if not glyphs:
+        return False
+    _draw_glyphs(draw, x, fonts.baseline(centre_y), glyphs, fill, spacing)
+    return True
 
 
 # --- Image helpers ---------------------------------------------------------
@@ -152,9 +248,13 @@ def _circle_avatar(avatar_bytes: Optional[bytes], diameter: int) -> Image.Image:
 
 
 # --- Public API ------------------------------------------------------------
-def build_welcome_image(avatar_bytes: Optional[bytes], username: str, server_name: str,
-                        member_count: int, background_path: Optional[Path] = None) -> io.BytesIO:
-    """Render the welcome image and return it as an in-memory PNG."""
+def build_welcome_image(avatar_bytes: Optional[bytes], display_name: str, server_name: str,
+                        member_count: int, background_path: Optional[Path] = None,
+                        alt_name: str = "") -> io.BytesIO:
+    """Render the welcome image and return it as an in-memory PNG.
+
+    alt_name (the plain username) is used when the display name has no drawable characters.
+    """
     canvas = Image.new("RGBA", (W, H), DARK)
     try:
         # 1. Background banner
@@ -181,18 +281,18 @@ def build_welcome_image(avatar_bytes: Optional[bytes], username: str, server_nam
         draw = ImageDraw.Draw(canvas)
 
         # 4. Text block inside the card
-        _draw_spaced(draw, TEXT_X, 165, "WELCOME", _load_font(True, 30), SOFT_RED, 7)
+        _draw_line(draw, TEXT_X, 165, "WELCOME", True, 30, 30, SOFT_RED, spacing=7)
 
-        font, text = _fit_text(True, username, 58, TEXT_MAX_WIDTH, 30)
-        draw.text((TEXT_X, 228), text, font=font, fill=WHITE, anchor="lm")
+        name = sanitize_text(display_name)
+        if not _draw_line(draw, TEXT_X, 228, name, True, 58, 30, WHITE):
+            fallback = sanitize_text(alt_name) or "新成員"
+            _draw_line(draw, TEXT_X, 228, fallback, True, 58, 30, WHITE)
 
         draw.rounded_rectangle((TEXT_X, 270, TEXT_X + 80, 274), radius=2, fill=RED)
 
-        font, text = _fit_text(False, f"to {server_name}", 32, TEXT_MAX_WIDTH, 20)
-        draw.text((TEXT_X, 308), text, font=font, fill=SOFT_WHITE, anchor="lm")
-
-        font = _load_font(False, 28)
-        draw.text((TEXT_X, 350), f"Member #{member_count:,}", font=font, fill=SOFT_RED, anchor="lm")
+        server = sanitize_text(server_name) or "伺服器"
+        _draw_line(draw, TEXT_X, 308, f"歡迎加入 {server}", False, 32, 20, SOFT_WHITE)
+        _draw_line(draw, TEXT_X, 350, f"第 {member_count:,} 位成員", False, 28, 20, SOFT_RED)
 
         # 5. Encode, then release the canvas immediately
         rgb = canvas.convert("RGB")
@@ -206,22 +306,22 @@ def build_welcome_image(avatar_bytes: Optional[bytes], username: str, server_nam
 
 
 def save_custom_background(data: bytes, destination: Path) -> None:
-    """Validate an uploaded PNG/JPG, pre-fit it to the banner size and store it as JPEG.
+    """Validate an uploaded PNG/JPG, pre-fit it to the image size and store it as JPEG.
 
     Storing the already-cropped result keeps files small and rendering fast.
     """
     try:
         with Image.open(io.BytesIO(data)) as source:
             if source.format not in {"PNG", "JPEG"}:
-                raise BackgroundError("Only PNG and JPG images are supported.")
+                raise BackgroundError("只支援 PNG 或 JPG 圖片。")
             if source.width * source.height > config.MAX_BACKGROUND_PIXELS:
-                raise BackgroundError("That image has too many pixels. Please use one under about 12 megapixels.")
+                raise BackgroundError("這張圖片的像素太多，請使用約 1200 萬像素以下的圖片。")
             source.draft("RGB", (W * 2, H * 2))  # faster, lower-memory JPEG decode
             fitted = ImageOps.fit(source.convert("RGB"), (W, H), RESAMPLE)
     except BackgroundError:
         raise
     except (OSError, ValueError, Image.DecompressionBombError) as exc:
-        raise BackgroundError("That file could not be read as a PNG or JPG image.") from exc
+        raise BackgroundError("無法讀取這個檔案，請確認它是 PNG 或 JPG 圖片。") from exc
 
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -229,6 +329,6 @@ def save_custom_background(data: bytes, destination: Path) -> None:
         fitted.save(temp_path, format="JPEG", quality=90, optimize=True)
         temp_path.replace(destination)
     except OSError as exc:
-        raise BackgroundError("The background could not be saved on disk.") from exc
+        raise BackgroundError("無法把背景圖儲存到磁碟。") from exc
     finally:
         fitted.close()
