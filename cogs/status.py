@@ -26,21 +26,24 @@ WATCHING = discord.ActivityType.watching
 LISTENING = discord.ActivityType.listening
 
 STATUSES = [
+    (WATCHING,  "🥲 別ping我，拜託"),
     (PLAYING,   "🥵 0.1 顆 CPU 在硬撐"),
     (PLAYING,   "🧠 512MB 腦容量不太夠"),
     (WATCHING,  "📉 記憶體一點一點變少"),
+    (WATCHING,  "他很壞嘟嘟嘟"),
     (LISTENING, "😮‍💨 CPU 喘氣的聲音"),
-    (PLAYING,   "🐌 用 0.1 顆 CPU 跑步"),
+    (PLAYING,   "🐌 Intel Duo 2 比我還快"),
     (WATCHING,  "💾 隨身碟都比我寬裕"),
-    (PLAYING,   "🪫 省電模式，永久開啟"),
+    (PLAYING,   "🖥️ 512MB RAM，還要跑程式"),
     (LISTENING, "🥲 老闆，我想加薪加 RAM"),
-    (WATCHING,  "🧊 CPU 凍僵了還在上班"),
-    (PLAYING,   "🖼️ 一次只畫一張圖，再多會哭"),
-    (WATCHING,  "🙏 拜託別一次湧進來太多人"),
+    (WATCHING,  "🧊 CPU 炸了還在上班"),
+    (PLAYING,   "🖼️ 一次只畫一張圖，再多會炸"),
+    (WATCHING,  "🙏 拜託別一次湧進來太多人，會炸！"),
     (PLAYING,   "👥 {members} 位成員，我只有 512MB"),
-    (LISTENING, "🔥 風扇的聲音…喔我沒有風扇"),
+    (LISTENING, "🔥 聽風扇的聲音，一聲聲清晰"),
     (PLAYING,   "💸 窮到只剩 512MB"),
-    (WATCHING,  "⏳ 0.1 CPU 還在想"),
+    (WATCHING,  "⏳ 0.1 CPU 還在想，別吵"),
+    (WATCHING,  "還在看？你膽子真是肥嘟嘟的！"),
     (PLAYING,   "🏠 {servers} 個伺服器，一顆小小的 CPU"),
 ]
 
