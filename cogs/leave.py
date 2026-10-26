@@ -1,6 +1,5 @@
 """Leave system: on_raw_member_remove listener and the /離開 commands."""
 import logging
-import sqlite3
 from typing import Optional
 
 import discord
@@ -33,13 +32,13 @@ class LeaveCog(commands.Cog, name="Leave"):
         if guild is None:
             return
         try:
-            settings = database.get_settings("leave", guild.id)
+            settings = await database.get_settings("leave", guild.id)
             if not settings["enabled"] or not settings["channel_id"]:
                 return
             sent, notes = await self._send_leave(guild, payload.user, settings)
             if not sent or notes:
                 log.warning("Leave message in guild %s: sent=%s notes=%s", guild.id, sent, notes)
-        except sqlite3.Error:
+        except database.DatabaseError:
             log.exception("Database error while handling a leave in guild %s", guild.id)
         except Exception:
             log.exception("Unexpected error while handling a leave in guild %s", guild.id)
@@ -66,9 +65,9 @@ class LeaveCog(commands.Cog, name="Leave"):
             fields["message"] = clean_template(message)
         if style:
             fields["use_embed"] = int(style.value == "embed")
-        database.update_settings("leave", interaction.guild_id, **fields)
+        await database.update_settings("leave", interaction.guild_id, **fields)
 
-        settings = database.get_settings("leave", interaction.guild_id)
+        settings = await database.get_settings("leave", interaction.guild_id)
         notes = await channel_warnings(self.bot, channel, embeds=bool(settings["use_embed"]), files=False)
         text = f"✅ 已在 {channel.mention} 啟用離開訊息。"
         if notes:
@@ -78,8 +77,8 @@ class LeaveCog(commands.Cog, name="Leave"):
 
     @leave.command(name="啟用", description="啟用離開系統")
     async def leave_enable(self, interaction: discord.Interaction) -> None:
-        settings = database.get_settings("leave", interaction.guild_id)
-        database.update_settings("leave", interaction.guild_id, enabled=1)
+        settings = await database.get_settings("leave", interaction.guild_id)
+        await database.update_settings("leave", interaction.guild_id, enabled=1)
         if not settings["channel_id"]:
             await reply(interaction, "✅ 已啟用，但還沒有設定頻道，請用 `/離開 頻道` 選擇。")
         else:
@@ -87,15 +86,15 @@ class LeaveCog(commands.Cog, name="Leave"):
 
     @leave.command(name="停用", description="停用離開系統")
     async def leave_disable(self, interaction: discord.Interaction) -> None:
-        database.update_settings("leave", interaction.guild_id, enabled=0)
+        await database.update_settings("leave", interaction.guild_id, enabled=0)
         await reply(interaction, "✅ 離開系統已停用，設定會保留。")
 
     @leave.command(name="頻道", description="選擇離開頻道")
     @app_commands.describe(channel="發送離開訊息的頻道")
     @app_commands.rename(channel="頻道")
     async def leave_channel(self, interaction: discord.Interaction, channel: discord.TextChannel) -> None:
-        database.update_settings("leave", interaction.guild_id, channel_id=channel.id)
-        settings = database.get_settings("leave", interaction.guild_id)
+        await database.update_settings("leave", interaction.guild_id, channel_id=channel.id)
+        settings = await database.get_settings("leave", interaction.guild_id)
         notes = await channel_warnings(self.bot, channel, embeds=bool(settings["use_embed"]), files=False)
         text = f"✅ 離開訊息會發送到 {channel.mention}。"
         if notes:
@@ -109,7 +108,7 @@ class LeaveCog(commands.Cog, name="Leave"):
     async def leave_message(self, interaction: discord.Interaction, text: Optional[MessageText] = None,
                             style: Optional[app_commands.Choice[str]] = None) -> None:
         if text is None and style is None:
-            settings = database.get_settings("leave", interaction.guild_id)
+            settings = await database.get_settings("leave", interaction.guild_id)
             kind = "嵌入式訊息" if settings["use_embed"] else "純文字"
             await reply(interaction, f"目前樣式：**{kind}**\n目前內容：\n```{settings['message']}```\n"
                                      f"可用變數：`{VARIABLES_HELP}`\n{VARIABLES_DESCRIPTION}\n輸入 `\\n` 可以換行。")
@@ -119,12 +118,12 @@ class LeaveCog(commands.Cog, name="Leave"):
             fields["message"] = clean_template(text)
         if style is not None:
             fields["use_embed"] = int(style.value == "embed")
-        database.update_settings("leave", interaction.guild_id, **fields)
+        await database.update_settings("leave", interaction.guild_id, **fields)
         await reply(interaction, "✅ 離開訊息已更新，可以用 `/離開 測試` 查看。")
 
     @leave.command(name="測試", description="把測試離開訊息發送到離開頻道")
     async def leave_test(self, interaction: discord.Interaction) -> None:
-        settings = database.get_settings("leave", interaction.guild_id)
+        settings = await database.get_settings("leave", interaction.guild_id)
         if not settings["channel_id"]:
             await reply(interaction, "❌ 還沒有設定離開頻道，請先用 `/離開 頻道`。")
             return

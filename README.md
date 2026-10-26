@@ -1,7 +1,7 @@
 # Welcome Bot（輕量版 ProBot 歡迎系統）
 
 為 **512MB RAM** 主機設計的 Discord 歡迎機器人：歡迎訊息、離開訊息、自動身分組、Pillow 歡迎圖片。
-只使用 Python + discord.py + SQLite + Pillow，沒有任何背景輪詢、快取或大型框架。
+只使用 Python + discord.py + SQLite + Pillow，沒有大型框架；唯一的定時動作是每 5 秒更換一次機器人狀態（可關閉）。
 
 ## 1. 功能介紹
 
@@ -9,6 +9,7 @@
 - **離開系統**：指定頻道、自訂訊息、純文字 / Embed
 - **自動身分組**：每個伺服器獨立設定；權限不足時不會崩潰，並會在頻道提醒管理員
 - **歡迎圖片**：1200×406，圓形頭像、深色圓角卡片；內建多種備援字型，特殊字元、花體字、Emoji 名稱都不會變成方塊
+- **輪播狀態**：每 5 秒換一個狀態（含表情符號，也會顯示伺服器數與成員數），全部寫在 `cogs/status.py` 一個檔案裡
 - **全中文介面**：所有 Slash 指令、選項與機器人回覆都是中文
 - **訊息變數**：`{user}` `{username}` `{displayname}` `{server}` `{member_count}` `{user_id}`
 - 所有設定存在 SQLite，重啟後保留；每個伺服器完全獨立
@@ -73,6 +74,8 @@ LOG_LEVEL=INFO
 
 - `SYNC_COMMANDS`：第一次啟動需要 `true` 來註冊 Slash Commands；之後可改成 `false`。
 - `DATA_DIR`（選填）：資料庫與自訂背景的資料夾，預設是專案內的 `data/`。
+- `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN`（選填）：兩個都填就改用 Turso 雲端資料庫保存設定，詳見第 14 節。
+- `STATUS_ROTATION`（選填）：填 `false` 可關閉狀態輪播。
 - `PORT`（選填）：有設定時才會啟動健康檢查網頁（Render 會自動提供）。
 
 ## 7. 安裝 requirements
@@ -140,6 +143,20 @@ Discord 名稱常含花體字、符號、Emoji 或其他語言。程式會：
 - 機器人需要：View Channels、Send Messages、Embed Links、Attach Files、Manage Roles。
 - **自動身分組**：機器人的最高身分組必須**高於**要發放的身分組。
 
+### 修改輪播狀態
+
+打開 `cogs/status.py`，編輯最上方的 `STATUSES` 清單即可：
+
+```python
+(WATCHING, "👀 誰剛進來了？"),      # 顯示成「正在看 👀 誰剛進來了？」
+(PLAYING,  "🏠 {servers} 個伺服器的大門"),  # {servers} 會自動換成伺服器數
+```
+
+- 類型有 `PLAYING`（正在玩）、`WATCHING`（正在看）、`LISTENING`（正在聽）
+- 可用變數：`{servers}` 伺服器數、`{members}` 全部成員數
+- 間隔由 `STATUS_INTERVAL_SECONDS` 控制。Discord 限制約 20 秒內 5 次狀態更新，**不要低於 5 秒**
+- 機器人帳號無法使用「自訂狀態」的表情符號欄位，所以表情符號直接寫在文字裡
+
 ## 11. 常見問題
 
 **Slash Commands 沒有出現？** 確認邀請時勾了 `applications.commands`、`SYNC_COMMANDS=true`，等 1–2 分鐘或重開 Discord。
@@ -157,7 +174,7 @@ Discord 名稱常含花體字、符號、Emoji 或其他語言。程式會：
 ## 12. 512MB RAM 部署建議
 
 - 只開 `guilds` + `members` Intent；關閉訊息與成員快取，不下載成員清單
-- 完全事件驅動，沒有定時任務或輪詢；SQLite 即開即關
+- 除了狀態輪播（每 5 秒送出一個很小的 Gateway 訊息）外，完全事件驅動；SQLite 即開即關
 - 圖片一次只渲染一張，用完立即 `close()`
 - 單一進程、venv、日誌只輸出 stdout、第一次成功後 `SYNC_COMMANDS=false`
 
@@ -180,12 +197,40 @@ Discord 名稱常含花體字、符號、Emoji 或其他語言。程式會：
 4. **UptimeRobot**：Add New Monitor → **HTTP(s)** → URL 填 `https://welcome-bot-xxxx.onrender.com/health` → 間隔 5 分鐘。
    Render 免費版閒置 15 分鐘會休眠，5 分鐘一次的 ping 可避免休眠。
 
-> ⚠️ **免費版不會保存資料**
-> Render 免費方案的檔案系統是暫時的。每次重新部署（包含推送 GitHub 觸發的自動部署）或平台重啟，`bot.db` 與上傳的自訂背景都會消失，所有伺服器要重新設定。
-> - **付費方案 + Persistent Disk**（Starter 加 1GB 磁碟）：在 `render.yaml` 取消註解 `disk` 與 `DATA_DIR=/var/data`，資料就會永久保留。
-> - 使用免費版：設定只需幾個指令就能重建（`/歡迎 快速設定 ...`），並盡量避免頻繁推送程式碼。
+> ⚠️ **Render 免費版的磁碟會在每次重新部署時清空**
+> 只用本機 SQLite 時，`bot.db` 會跟著消失，所有伺服器要重新設定。解法是改用第 14 節的 **Turso**（免費），設定存在雲端，重新部署也不受影響。
+> 另一個做法是付費方案 + Persistent Disk：在 `render.yaml` 取消註解 `disk` 與 `DATA_DIR=/var/data`。
+> 注意：用 `/歡迎 圖片 背景:` 上傳的自訂背景圖仍存在本機磁碟，免費版重新部署後會消失並自動改回預設橫幅（預設橫幅放在程式碼裡，不受影響）。
 
 免費方案每月 750 小時，剛好夠一個服務 24 小時運行；RAM 同為 512MB。
+
+## 14. 使用 Turso 雲端資料庫（建議搭配 Render 免費版）
+
+Turso 是雲端 SQLite，免費方案不需信用卡（目前為 100 個資料庫、5GB、每月 5 億次讀取、1000 萬次寫入，額度以官網為準）。
+本專案只存各伺服器的設定，用量遠低於上限。
+
+**設計**：機器人透過 Turso 的 HTTP 介面連線，不需要額外安裝套件。每個伺服器的設定讀取一次後就放在記憶體，成員加入 / 離開時不會連線資料庫；只有管理員改設定時才寫入。沒設定 Turso 變數時，自動使用本機 SQLite。
+
+**取得連線資料**
+
+1. 到 <https://turso.tech> 註冊（可用 GitHub 登入），建立一個資料庫，名稱隨意（例如 `welcomebot`）。
+2. 在資料庫頁面複製 **URL**，格式像 `libsql://welcomebot-你的帳號.turso.io`。
+3. 在資料庫清單點該資料庫的 **Get Token → Generate Token**，複製 Token。
+   （改用命令列的話：`turso db show 資料庫名稱 --url` 與 `turso db tokens create 資料庫名稱`。）
+
+**填到 Render → Environment**
+
+| Key | Value |
+| --- | --- |
+| `TURSO_DATABASE_URL` | `libsql://welcomebot-你的帳號.turso.io` |
+| `TURSO_AUTH_TOKEN` | 剛剛產生的 Token（需保密） |
+
+存檔後會自動重新部署，Logs 看到 `Database ready (Turso)` 就代表成功；資料表會自動建立，不用手動操作。
+
+**注意**
+- Token 跟 Discord Token 一樣，不要放進 GitHub 或截圖。外流時到 Turso 重新產生並更新 Render 即可。
+- Turso 暫時連不上時，指令會回覆「目前無法讀取或儲存設定」，已讀取過的設定仍可繼續發送歡迎訊息，機器人不會崩潰。
+- 免費方案的額度與規則可能調整，請以 Turso 官網為準。
 
 ## 專案結構
 
@@ -198,7 +243,7 @@ WelcomeBot/
 ├── render.yaml         # Render Blueprint
 ├── requirements.txt
 ├── .env.example
-├── cogs/               # welcome.py, leave.py, autorole.py, settings.py
+├── cogs/               # welcome.py, leave.py, autorole.py, settings.py, status.py
 ├── utils/              # image.py, formatter.py, messaging.py
 ├── assets/             # backgrounds/default.png, fonts/（Noto Sans 多語系備援字型）
 └── data/               # bot.db 與自訂背景（自動建立）

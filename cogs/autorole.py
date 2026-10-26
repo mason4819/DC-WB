@@ -1,6 +1,5 @@
 """Auto role: gives new members a role and tells admins when that fails."""
 import logging
-import sqlite3
 import time
 
 import discord
@@ -27,7 +26,7 @@ class AutoRoleCog(commands.Cog, name="AutoRole"):
     async def on_member_join(self, member: discord.Member) -> None:
         guild = member.guild
         try:
-            settings = database.get_settings("autorole", guild.id)
+            settings = await database.get_settings("autorole", guild.id)
             if not settings["enabled"] or not settings["role_id"]:
                 return
 
@@ -50,7 +49,7 @@ class AutoRoleCog(commands.Cog, name="AutoRole"):
                 log.info("Member %s left before the auto role was applied", member.id)
             except discord.HTTPException:
                 log.warning("Discord API error while giving the auto role in guild %s", guild.id, exc_info=True)
-        except sqlite3.Error:
+        except database.DatabaseError:
             log.exception("Database error in auto role for guild %s", guild.id)
         except Exception:
             log.exception("Unexpected auto role error in guild %s", guild.id)
@@ -65,10 +64,10 @@ class AutoRoleCog(commands.Cog, name="AutoRole"):
 
         channel = None
         try:
-            welcome = database.get_settings("welcome", guild.id)
+            welcome = await database.get_settings("welcome", guild.id)
             if welcome["channel_id"]:
                 channel = guild.get_channel(welcome["channel_id"])
-        except sqlite3.Error:
+        except database.DatabaseError:
             pass
         if not isinstance(channel, discord.TextChannel):
             channel = guild.system_channel
@@ -89,7 +88,7 @@ class AutoRoleCog(commands.Cog, name="AutoRole"):
         if role.is_default() or role.managed:
             await reply(interaction, "❌ 機器人無法發放這個身分組，請選擇一般的身分組。")
             return
-        database.update_settings("autorole", interaction.guild_id, role_id=role.id, enabled=1)
+        await database.update_settings("autorole", interaction.guild_id, role_id=role.id, enabled=1)
         me = await get_bot_member(self.bot, interaction.guild)
         problem = role_problem(me, role) if me else None
         text = f"✅ 新成員會自動取得 {role.mention}。"
@@ -99,17 +98,17 @@ class AutoRoleCog(commands.Cog, name="AutoRole"):
 
     @autorole.command(name="移除", description="移除自動身分組設定")
     async def autorole_remove(self, interaction: discord.Interaction) -> None:
-        database.update_settings("autorole", interaction.guild_id, role_id=None, enabled=0)
+        await database.update_settings("autorole", interaction.guild_id, role_id=None, enabled=0)
         await reply(interaction, "✅ 已移除自動身分組，新成員不會再自動取得身分組。")
 
     @autorole.command(name="啟用", description="啟用自動身分組")
     async def autorole_enable(self, interaction: discord.Interaction) -> None:
-        settings = database.get_settings("autorole", interaction.guild_id)
+        settings = await database.get_settings("autorole", interaction.guild_id)
         role = interaction.guild.get_role(settings["role_id"]) if settings["role_id"] else None
         if role is None:
             await reply(interaction, "❌ 還沒有設定身分組，請先用 `/自動身分組 設定`。")
             return
-        database.update_settings("autorole", interaction.guild_id, enabled=1)
+        await database.update_settings("autorole", interaction.guild_id, enabled=1)
         me = await get_bot_member(self.bot, interaction.guild)
         problem = role_problem(me, role) if me else None
         text = f"✅ 自動身分組已啟用（{role.mention}）。"
@@ -119,7 +118,7 @@ class AutoRoleCog(commands.Cog, name="AutoRole"):
 
     @autorole.command(name="停用", description="停用自動身分組")
     async def autorole_disable(self, interaction: discord.Interaction) -> None:
-        database.update_settings("autorole", interaction.guild_id, enabled=0)
+        await database.update_settings("autorole", interaction.guild_id, enabled=0)
         await reply(interaction, "✅ 自動身分組已停用，選好的身分組會保留。")
 
 

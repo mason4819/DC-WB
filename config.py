@@ -19,6 +19,12 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()
 # check server starts so uptime monitors can ping the bot. 0 = no web server.
 PORT = int(os.getenv("PORT", "0") or 0)
 
+# Optional external database (Turso). When both are set, settings are stored there
+# instead of the local SQLite file, so they survive redeploys on hosts with a
+# temporary disk. Accepts libsql:// or https:// URLs.
+TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", "").strip()
+TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "").strip()
+
 # --- Paths -----------------------------------------------------------------
 # Set DATA_DIR to a persistent disk path on hosts that provide one (e.g. /var/data on Render).
 DATA_DIR = Path(os.getenv("DATA_DIR", str(BASE_DIR / "data"))).expanduser()

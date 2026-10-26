@@ -1,7 +1,6 @@
 """Welcome system: on_member_join listener and the /歡迎 commands."""
 import asyncio
 import logging
-import sqlite3
 from typing import Optional
 
 import discord
@@ -33,13 +32,13 @@ class WelcomeCog(commands.Cog, name="Welcome"):
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member) -> None:
         try:
-            settings = database.get_settings("welcome", member.guild.id)
+            settings = await database.get_settings("welcome", member.guild.id)
             if not settings["enabled"] or not settings["channel_id"]:
                 return
             sent, notes = await self._send_welcome(member, settings)
             if not sent or notes:
                 log.warning("Welcome in guild %s: sent=%s notes=%s", member.guild.id, sent, notes)
-        except sqlite3.Error:
+        except database.DatabaseError:
             log.exception("Database error while welcoming a member in guild %s", member.guild.id)
         except Exception:
             log.exception("Unexpected error while welcoming a member in guild %s", member.guild.id)
@@ -95,9 +94,9 @@ class WelcomeCog(commands.Cog, name="Welcome"):
             fields["use_embed"] = int(style.value == "embed")
         if image is not None:
             fields["image_enabled"] = int(image)
-        database.update_settings("welcome", interaction.guild_id, **fields)
+        await database.update_settings("welcome", interaction.guild_id, **fields)
 
-        settings = database.get_settings("welcome", interaction.guild_id)
+        settings = await database.get_settings("welcome", interaction.guild_id)
         notes = await channel_warnings(self.bot, channel, embeds=bool(settings["use_embed"]),
                                        files=bool(settings["image_enabled"]))
         text = f"✅ 已在 {channel.mention} 啟用歡迎訊息。"
@@ -108,8 +107,8 @@ class WelcomeCog(commands.Cog, name="Welcome"):
 
     @welcome.command(name="啟用", description="啟用歡迎系統")
     async def welcome_enable(self, interaction: discord.Interaction) -> None:
-        settings = database.get_settings("welcome", interaction.guild_id)
-        database.update_settings("welcome", interaction.guild_id, enabled=1)
+        settings = await database.get_settings("welcome", interaction.guild_id)
+        await database.update_settings("welcome", interaction.guild_id, enabled=1)
         if not settings["channel_id"]:
             await reply(interaction, "✅ 已啟用，但還沒有設定頻道，請用 `/歡迎 頻道` 選擇。")
         else:
@@ -117,15 +116,15 @@ class WelcomeCog(commands.Cog, name="Welcome"):
 
     @welcome.command(name="停用", description="停用歡迎系統")
     async def welcome_disable(self, interaction: discord.Interaction) -> None:
-        database.update_settings("welcome", interaction.guild_id, enabled=0)
+        await database.update_settings("welcome", interaction.guild_id, enabled=0)
         await reply(interaction, "✅ 歡迎系統已停用，設定會保留。")
 
     @welcome.command(name="頻道", description="選擇歡迎頻道")
     @app_commands.describe(channel="發送歡迎訊息的頻道")
     @app_commands.rename(channel="頻道")
     async def welcome_channel(self, interaction: discord.Interaction, channel: discord.TextChannel) -> None:
-        database.update_settings("welcome", interaction.guild_id, channel_id=channel.id)
-        settings = database.get_settings("welcome", interaction.guild_id)
+        await database.update_settings("welcome", interaction.guild_id, channel_id=channel.id)
+        settings = await database.get_settings("welcome", interaction.guild_id)
         notes = await channel_warnings(self.bot, channel, embeds=bool(settings["use_embed"]),
                                        files=bool(settings["image_enabled"]))
         text = f"✅ 歡迎訊息會發送到 {channel.mention}。"
@@ -140,7 +139,7 @@ class WelcomeCog(commands.Cog, name="Welcome"):
     async def welcome_message(self, interaction: discord.Interaction, text: Optional[MessageText] = None,
                               style: Optional[app_commands.Choice[str]] = None) -> None:
         if text is None and style is None:
-            settings = database.get_settings("welcome", interaction.guild_id)
+            settings = await database.get_settings("welcome", interaction.guild_id)
             kind = "嵌入式訊息" if settings["use_embed"] else "純文字"
             await reply(interaction, f"目前樣式：**{kind}**\n目前內容：\n```{settings['message']}```\n"
                                      f"可用變數：`{VARIABLES_HELP}`\n{VARIABLES_DESCRIPTION}\n輸入 `\\n` 可以換行。")
@@ -150,7 +149,7 @@ class WelcomeCog(commands.Cog, name="Welcome"):
             fields["message"] = clean_template(text)
         if style is not None:
             fields["use_embed"] = int(style.value == "embed")
-        database.update_settings("welcome", interaction.guild_id, **fields)
+        await database.update_settings("welcome", interaction.guild_id, **fields)
         await reply(interaction, "✅ 歡迎訊息已更新，可以用 `/歡迎 預覽` 查看。")
 
     @welcome.command(name="圖片", description="設定歡迎圖片（不填任何選項則顯示目前設定）")
@@ -162,7 +161,7 @@ class WelcomeCog(commands.Cog, name="Welcome"):
                             background: Optional[discord.Attachment] = None,
                             reset: Optional[bool] = None) -> None:
         guild_id = interaction.guild_id
-        settings = database.get_settings("welcome", guild_id)
+        settings = await database.get_settings("welcome", guild_id)
 
         if enabled is None and background is None and not reset:
             await reply(interaction,
@@ -206,12 +205,12 @@ class WelcomeCog(commands.Cog, name="Welcome"):
         if enabled is not None:
             fields["image_enabled"] = int(enabled)
 
-        database.update_settings("welcome", guild_id, **fields)
+        await database.update_settings("welcome", guild_id, **fields)
         await reply(interaction, "✅ 歡迎圖片設定已更新，可以用 `/歡迎 預覽` 查看。")
 
     @welcome.command(name="測試", description="把測試歡迎訊息發送到歡迎頻道")
     async def welcome_test(self, interaction: discord.Interaction) -> None:
-        settings = database.get_settings("welcome", interaction.guild_id)
+        settings = await database.get_settings("welcome", interaction.guild_id)
         if not settings["channel_id"]:
             await reply(interaction, "❌ 還沒有設定歡迎頻道，請先用 `/歡迎 頻道`。")
             return
@@ -224,7 +223,7 @@ class WelcomeCog(commands.Cog, name="Welcome"):
 
     @welcome.command(name="預覽", description="在這裡預覽歡迎訊息（只有你看得到）")
     async def welcome_preview(self, interaction: discord.Interaction) -> None:
-        settings = database.get_settings("welcome", interaction.guild_id)
+        settings = await database.get_settings("welcome", interaction.guild_id)
         await interaction.response.defer(ephemeral=True)
         member = interaction.user
         text = render_message(settings["message"], member, interaction.guild)

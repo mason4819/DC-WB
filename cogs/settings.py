@@ -30,9 +30,9 @@ class SettingsCog(commands.Cog, name="Settings"):
     @app_commands.checks.has_permissions(manage_guild=True)
     async def show_config(self, interaction: discord.Interaction) -> None:
         guild = interaction.guild
-        welcome = database.get_settings("welcome", guild.id)
-        leave = database.get_settings("leave", guild.id)
-        autorole = database.get_settings("autorole", guild.id)
+        welcome = await database.get_settings("welcome", guild.id)
+        leave = await database.get_settings("leave", guild.id)
+        autorole = await database.get_settings("autorole", guild.id)
         problems: list[str] = []
 
         embed = discord.Embed(title=f"{guild.name} 的設定", colour=config.WELCOME_COLOR)

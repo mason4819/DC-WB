@@ -3,7 +3,6 @@
 Run with:  python bot.py
 """
 import logging
-import sqlite3
 import sys
 
 import discord
@@ -21,6 +20,7 @@ EXTENSIONS = (
     "cogs.leave",
     "cogs.autorole",
     "cogs.settings",
+    "cogs.status",
 )
 
 
@@ -35,7 +35,7 @@ class BotTree(app_commands.CommandTree):
             text = "這個指令只能在伺服器內使用。"
         elif isinstance(error, app_commands.CheckFailure):
             text = "你沒有使用這個指令的權限。"
-        elif isinstance(error, app_commands.CommandInvokeError) and isinstance(error.original, sqlite3.Error):
+        elif isinstance(error, app_commands.CommandInvokeError) and isinstance(error.original, database.DatabaseError):
             log.error("Database error in /%s", command_name, exc_info=error.original)
             text = "目前無法讀取或儲存設定，請稍後再試。"
         else:
@@ -70,7 +70,7 @@ class WelcomeBot(commands.Bot):
         self._health_runner = None
 
     async def setup_hook(self) -> None:
-        database.init_db()
+        await database.init_db()
         # Health check endpoint for Render / UptimeRobot (only when PORT is set).
         self._health_runner = await keepalive.start(config.PORT)
         for extension in EXTENSIONS:
@@ -84,6 +84,7 @@ class WelcomeBot(commands.Bot):
 
     async def close(self) -> None:
         await keepalive.stop(self._health_runner)
+        await database.close()
         await super().close()
 
     async def on_ready(self) -> None:
