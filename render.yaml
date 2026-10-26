@@ -1,0 +1,24 @@
+# Render Blueprint. Create it with: Render Dashboard > New > Blueprint > pick your GitHub repo.
+services:
+  - type: web
+    name: welcome-bot
+    runtime: python
+    plan: free                  # use "starter" if you attach a disk (see below)
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DISCORD_TOKEN
+        sync: false             # you type it in the Render dashboard, never in Git
+      - key: SYNC_COMMANDS
+        value: "true"
+      # With a persistent disk, also uncomment:
+      # - key: DATA_DIR
+      #   value: /var/data
+    # Persistent settings need a paid plan + disk. Uncomment and set plan: starter:
+    # disk:
+    #   name: bot-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
