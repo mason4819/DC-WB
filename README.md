@@ -148,8 +148,8 @@ Discord 名稱常含花體字、符號、Emoji 或其他語言。程式會：
 打開 `cogs/status.py`，編輯最上方的 `STATUSES` 清單即可：
 
 ```python
-(WATCHING, "👀 誰剛進來了？"),      # 顯示成「正在看 👀 誰剛進來了？」
-(PLAYING,  "🏠 {servers} 個伺服器的大門"),  # {servers} 會自動換成伺服器數
+(WATCHING, "📉 記憶體一點一點變少"),   # 顯示成「正在看 📉 記憶體一點一點變少」
+(PLAYING,  "🏠 {servers} 個伺服器，一顆小小的 CPU"),  # {servers} 會自動換成伺服器數
 ```
 
 - 類型有 `PLAYING`（正在玩）、`WATCHING`（正在看）、`LISTENING`（正在聽）

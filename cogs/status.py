@@ -26,21 +26,22 @@ WATCHING = discord.ActivityType.watching
 LISTENING = discord.ActivityType.listening
 
 STATUSES = [
-    (WATCHING,  "👀 誰剛進來了？"),
-    (PLAYING,   "👋 在門口揮手"),
-    (LISTENING, "🔔 叮咚～有人來了"),
-    (PLAYING,   "🪑 搬椅子給新朋友"),
-    (WATCHING,  "🏠 {servers} 個伺服器的大門"),
-    (PLAYING,   "🎈 清點人數：{members} 位"),
-    (LISTENING, "☕ 大家聊天的聲音"),
-    (WATCHING,  "🌙 深夜報到的夜貓子"),
-    (PLAYING,   "🧹 打掃迎賓區"),
-    (PLAYING,   "💡 /歡迎 快速設定 就能開始"),
-    (WATCHING,  "🍵 泡茶等你入座"),
-    (LISTENING, "🎶 歡迎光臨～"),
-    (PLAYING,   "🍪 發餅乾給新人"),
-    (WATCHING,  "📮 收新成員的報到單"),
-    (PLAYING,   "🚪 顧著大門不打瞌睡"),
+    (PLAYING,   "🥵 0.1 顆 CPU 在硬撐"),
+    (PLAYING,   "🧠 512MB 腦容量不太夠"),
+    (WATCHING,  "📉 記憶體一點一點變少"),
+    (LISTENING, "😮‍💨 CPU 喘氣的聲音"),
+    (PLAYING,   "🐌 用 0.1 顆 CPU 跑步"),
+    (WATCHING,  "💾 隨身碟都比我寬裕"),
+    (PLAYING,   "🪫 省電模式，永久開啟"),
+    (LISTENING, "🥲 老闆，我想加薪加 RAM"),
+    (WATCHING,  "🧊 CPU 凍僵了還在上班"),
+    (PLAYING,   "🖼️ 一次只畫一張圖，再多會哭"),
+    (WATCHING,  "🙏 拜託別一次湧進來太多人"),
+    (PLAYING,   "👥 {members} 位成員，我只有 512MB"),
+    (LISTENING, "🔥 風扇的聲音…喔我沒有風扇"),
+    (PLAYING,   "💸 窮到只剩 512MB"),
+    (WATCHING,  "⏳ 0.1 CPU 還在想"),
+    (PLAYING,   "🏠 {servers} 個伺服器，一顆小小的 CPU"),
 ]
 
 
