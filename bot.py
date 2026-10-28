@@ -12,6 +12,7 @@ from discord.ext import commands
 import config
 import database
 import keepalive
+from utils import remote
 
 log = logging.getLogger("welcomebot")
 
@@ -85,6 +86,7 @@ class WelcomeBot(commands.Bot):
     async def close(self) -> None:
         await keepalive.stop(self._health_runner)
         await database.close()
+        await remote.close()
         await super().close()
 
     async def on_ready(self) -> None:

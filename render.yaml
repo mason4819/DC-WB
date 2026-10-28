@@ -18,6 +18,10 @@ services:
         sync: false             # from the Turso dashboard (libsql://...)
       - key: TURSO_AUTH_TOKEN
         sync: false             # database token from Turso, keep it secret
+      - key: IMAGE_WORKER_URL
+        sync: false             # optional: http://host:port of worker.py (e.g. on Wispbyte)
+      - key: IMAGE_WORKER_SECRET
+        sync: false             # optional: same secret as on the worker
       # With a persistent disk instead of Turso, uncomment:
       # - key: DATA_DIR
       #   value: /var/data

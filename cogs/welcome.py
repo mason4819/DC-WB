@@ -1,5 +1,6 @@
 """Welcome system: on_member_join listener and the /歡迎 commands."""
 import asyncio
+import io
 import logging
 from typing import Optional
 
@@ -10,6 +11,7 @@ from discord.ext import commands
 import config
 import database
 from utils import image as imaging
+from utils import remote
 from utils.formatter import VARIABLES_DESCRIPTION, VARIABLES_HELP, clean_template, render_message
 from utils.messaging import (STYLE_CHOICES, AdminGroup, build_message_kwargs, channel_warnings,
                              deliver, reply)
@@ -67,11 +69,20 @@ class WelcomeCog(commands.Cog, name="Welcome"):
                 candidate = config.DATA_DIR / settings["background_path"]
                 background = candidate if candidate.is_file() else None
 
-            async with self._image_lock:
-                buffer = await asyncio.to_thread(
-                    imaging.build_welcome_image, avatar_bytes, member.display_name,
-                    member.guild.name, member.guild.member_count or 0, background, member.name,
-                )
+            buffer = None
+            if remote.is_enabled():  # offload the drawing to the image worker if one is configured
+                png = await remote.render(
+                    avatar_bytes, member.display_name, member.guild.name, member.guild.member_count or 0,
+                    background.read_bytes() if background else None, member.name)
+                if png is not None:
+                    buffer = io.BytesIO(png)
+
+            if buffer is None:  # no worker, or it failed: draw locally, one image at a time
+                async with self._image_lock:
+                    buffer = await asyncio.to_thread(
+                        imaging.build_welcome_image, avatar_bytes, member.display_name,
+                        member.guild.name, member.guild.member_count or 0, background, member.name,
+                    )
             return discord.File(buffer, filename="welcome.png")
         except Exception:
             log.exception("Welcome image generation failed in guild %s", member.guild.id)

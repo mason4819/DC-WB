@@ -25,6 +25,11 @@ PORT = int(os.getenv("PORT", "0") or 0)
 TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", "").strip()
 TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "").strip()
 
+# Optional: offload welcome image rendering to a second host running worker.py
+# (for example on Wispbyte). If the worker is unreachable the bot renders locally.
+IMAGE_WORKER_URL = os.getenv("IMAGE_WORKER_URL", "").strip().rstrip("/")
+IMAGE_WORKER_SECRET = os.getenv("IMAGE_WORKER_SECRET", "").strip()
+
 # --- Paths -----------------------------------------------------------------
 # Set DATA_DIR to a persistent disk path on hosts that provide one (e.g. /var/data on Render).
 DATA_DIR = Path(os.getenv("DATA_DIR", str(BASE_DIR / "data"))).expanduser()

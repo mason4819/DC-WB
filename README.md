@@ -9,6 +9,7 @@
 - **離開系統**：指定頻道、自訂訊息、純文字 / Embed
 - **自動身分組**：每個伺服器獨立設定；權限不足時不會崩潰，並會在頻道提醒管理員
 - **歡迎圖片**：1200×406，圓形頭像、深色圓角卡片；內建多種備援字型，特殊字元、花體字、Emoji 名稱都不會變成方塊
+- **分擔畫圖（選用）**：可把歡迎圖片交給 Wispbyte 的 worker 繪製，失敗時自動改回本機
 - **輪播狀態**：每 5 秒換一個狀態（含表情符號，也會顯示伺服器數與成員數），全部寫在 `cogs/status.py` 一個檔案裡
 - **全中文介面**：所有 Slash 指令、選項與機器人回覆都是中文
 - **訊息變數**：`{user}` `{username}` `{displayname}` `{server}` `{member_count}` `{user_id}`
@@ -232,6 +233,45 @@ Turso 是雲端 SQLite，免費方案不需信用卡（目前為 100 個資料�
 - Turso 暫時連不上時，指令會回覆「目前無法讀取或儲存設定」，已讀取過的設定仍可繼續發送歡迎訊息，機器人不會崩潰。
 - 免費方案的額度與規則可能調整，請以 Turso 官網為準。
 
+## 15. 用 Wispbyte 分擔畫圖（選用）
+
+**分工**：Render 負責連線 Discord 和處理指令，Wispbyte 只負責產生歡迎圖片。畫圖是整個專案唯一吃 CPU 的工作，交給另一台主機後，Render 的 0.1 CPU 就輕鬆很多。
+
+```
+成員加入 → Render（機器人）─ 簽名請求 ─→ Wispbyte（worker.py 畫圖）
+                          ←──── PNG ────┘
+```
+
+- Wispbyte 連不上、逾時或回傳錯誤時，機器人**自動改回本機畫圖**，並在 1 分鐘內不再等它，所以歡迎訊息不會卡住。
+- 不設定相關變數就完全不啟用，行為跟以前一樣。
+- 請求用 HMAC-SHA256 簽名並檢查時間，沒有密鑰的人無法使用你的 worker。
+- worker 不挑主機，之後想換成其他主機，重做下面的步驟即可。
+
+**步驟**
+
+1. **產生共用密鑰**（在自己電腦執行，複製輸出）：
+   ```bash
+   python -c "import secrets; print(secrets.token_hex(32))"
+   ```
+2. **建立 Wispbyte 伺服器**：選免費方案、Python 環境。
+3. **上傳專案**：把整個 WelcomeBot 資料夾傳上去（worker 會用到 `worker.py`、`config.py`、`utils/`、`assets/`）。
+4. **設定啟動檔與套件**：啟動檔填 `worker.py`；套件填 `requirements-worker.txt` 裡的三個：`Pillow`、`aiohttp`、`python-dotenv`。
+5. **設定環境變數**：新增 `IMAGE_WORKER_SECRET`，值填第 1 步的密鑰。worker 不需要 Discord Token，也不需要 Turso 變數。
+6. **啟動並確認網址**：在面板找到伺服器的 IP 與 Port，用瀏覽器開 `http://IP:Port/health`，看到 `OK` 就成功。worker 會依序讀取 `PORT`、`SERVER_PORT`、`WORKER_PORT`，都沒有則用 8080；Port 必須是面板分配給你的那一個。
+7. **回到 Render → Environment** 新增：
+
+| Key | Value |
+| --- | --- |
+| `IMAGE_WORKER_URL` | `http://IP:Port`（不要加結尾斜線） |
+| `IMAGE_WORKER_SECRET` | 與 Wispbyte 相同的密鑰（需保密） |
+
+重新部署後，到 Discord 執行 `/歡迎 預覽`。worker 為了省資源已關閉存取日誌；若想確認有分擔到，可暫時把 worker 關掉，Render 的 Logs 會出現 `Image worker unavailable`，代表機器人原本有在用它，並已改回本機畫圖。
+
+**注意**
+- 我無法替你確認 Wispbyte 面板的實際選項名稱與網路設定，上面是依一般流程寫的；如果面板沒有對外的 IP/Port，worker 就無法被 Render 連到，此時不要設定那兩個變數即可。
+- 連線是 `http://`，內容只有頭像、顯示名稱、伺服器名稱與成員數，經過簽名防冒用但**沒有加密**。若 Wispbyte 提供網域與 HTTPS，請改用 `https://` 網址。
+- 自訂背景圖仍存在 Render 的磁碟上，每次畫圖時會一起傳給 worker；預設橫幅則是 worker 自己的程式碼裡就有。
+
 ## 專案結構
 
 ```
@@ -240,11 +280,13 @@ WelcomeBot/
 ├── config.py           # 路徑、限制、預設文字
 ├── database.py         # SQLite（4 張資料表）
 ├── keepalive.py        # Render / UptimeRobot 健康檢查
+├── worker.py           # 選用：在 Wispbyte 等第二台主機上專門畫歡迎圖片
+├── requirements-worker.txt
 ├── render.yaml         # Render Blueprint
 ├── requirements.txt
 ├── .env.example
 ├── cogs/               # welcome.py, leave.py, autorole.py, settings.py, status.py
-├── utils/              # image.py, formatter.py, messaging.py
+├── utils/              # image.py, formatter.py, messaging.py, remote.py
 ├── assets/             # backgrounds/default.png, fonts/（Noto Sans 多語系備援字型）
 └── data/               # bot.db 與自訂背景（自動建立）
 ```

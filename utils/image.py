@@ -18,7 +18,7 @@ import io
 import logging
 import unicodedata
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
@@ -218,16 +218,22 @@ def _gradient_banner() -> Image.Image:
     return banner
 
 
-def _load_banner(background_path: Optional[Path]) -> Image.Image:
-    """Load the custom background, else the default banner, else a gradient."""
-    for candidate in (background_path, config.DEFAULT_BACKGROUND):
-        if candidate is None or not Path(candidate).is_file():
+def _load_banner(background: Union[Path, bytes, None]) -> Image.Image:
+    """Load the custom background (file path or raw bytes), else the default banner, else a gradient."""
+    for candidate in (background, config.DEFAULT_BACKGROUND):
+        if candidate is None:
             continue
         try:
-            with Image.open(candidate) as source:
+            if isinstance(candidate, bytes):
+                source = Image.open(io.BytesIO(candidate))
+            elif Path(candidate).is_file():
+                source = Image.open(candidate)
+            else:
+                continue
+            with source:
                 return ImageOps.fit(source.convert("RGB"), (W, H), RESAMPLE)
         except (OSError, ValueError):
-            log.warning("Could not read background %s", candidate)
+            log.warning("Could not read a background image, trying the next one")
     return _gradient_banner()
 
 
@@ -249,7 +255,7 @@ def _circle_avatar(avatar_bytes: Optional[bytes], diameter: int) -> Image.Image:
 
 # --- Public API ------------------------------------------------------------
 def build_welcome_image(avatar_bytes: Optional[bytes], display_name: str, server_name: str,
-                        member_count: int, background_path: Optional[Path] = None,
+                        member_count: int, background: Union[Path, bytes, None] = None,
                         alt_name: str = "") -> io.BytesIO:
     """Render the welcome image and return it as an in-memory PNG.
 
@@ -258,7 +264,7 @@ def build_welcome_image(avatar_bytes: Optional[bytes], display_name: str, server
     canvas = Image.new("RGBA", (W, H), DARK)
     try:
         # 1. Background banner
-        banner = _load_banner(background_path)
+        banner = _load_banner(background)
         canvas.paste(banner, (0, 0))
         banner.close()
 
