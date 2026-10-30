@@ -375,8 +375,8 @@ async def leave_guild(request: web.Request) -> web.Response:
 async def security_headers(request: web.Request, handler):
     try:
         response = await handler(request)
-    except web.HTTPException as response:
-        pass
+    except web.HTTPException as exc:
+        response = exc
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
