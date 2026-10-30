@@ -11,9 +11,10 @@
 - **歡迎圖片**：1200×406，圓形頭像、深色圓角卡片；內建多種備援字型，特殊字元、花體字、Emoji 名稱都不會變成方塊
 - **分擔畫圖（選用）**：可把歡迎圖片交給 Wispbyte 的 worker 繪製，失敗時自動改回本機
 - **輪播狀態**：每 5 秒換一個狀態（含表情符號，也會顯示伺服器數與成員數），全部寫在 `cogs/status.py` 一個檔案裡
+- **Web 管理後台**：帳密登入、查看伺服器與設定，並可二次確認後讓 Bot 離開選定伺服器
 - **全中文介面**：所有 Slash 指令、選項與機器人回覆都是中文
 - **訊息變數**：`{user}` `{username}` `{displayname}` `{server}` `{member_count}` `{user_id}`
-- 所有設定存在 SQLite，重啟後保留；每個伺服器完全獨立
+- 各伺服器功能設定存在 SQLite，重啟後保留；每個伺服器完全獨立
 
 ## 2. 系統需求
 
@@ -69,15 +70,21 @@ cp .env.example .env      # Windows: copy .env.example .env
 
 ```
 DISCORD_TOKEN=你的機器人Token
+WEB_USERNAME=你設定的後台帳號
+WEB_PASSWORD=請設定一組夠長且不重複使用的密碼
+PORT=8080
+WEB_SECURE_COOKIE=false
 SYNC_COMMANDS=true
 LOG_LEVEL=INFO
 ```
 
 - `SYNC_COMMANDS`：第一次啟動需要 `true` 來註冊 Slash Commands；之後可改成 `false`。
+- `WEB_USERNAME` / `WEB_PASSWORD`：後台登入帳號與密碼；設定在主機環境變數或 `.env`，不要提交到 Git。
+- `PORT`：有設定時啟動管理後台及健康檢查網頁（Render 會自動提供）。
+- `WEB_SECURE_COOKIE`：預設 `true`，正式 HTTPS 網站請保持開啟；本機用 HTTP 測試時才設為 `false`。
 - `DATA_DIR`（選填）：資料庫與自訂背景的資料夾，預設是專案內的 `data/`。
 - `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN`（選填）：兩個都填就改用 Turso 雲端資料庫保存設定，詳見第 14 節。
 - `STATUS_ROTATION`（選填）：填 `false` 可關閉狀態輪播。
-- `PORT`（選填）：有設定時才會啟動健康檢查網頁（Render 會自動提供）。
 
 ## 7. 安裝 requirements
 
@@ -95,7 +102,17 @@ python bot.py
 
 資料表會在第一次啟動時自動建立（`data/bot.db`），不需要手動初始化。
 
-## 9. Slash Command 使用方式
+## 9. Web 管理後台
+
+設定 `WEB_USERNAME`、`WEB_PASSWORD` 與 `PORT` 後，開啟 `http://localhost:PORT/`（Render 使用部署網址）並登入。後台可：
+
+- 查看 Bot 所在的伺服器、ID、成員數，以及歡迎、離開、自動身分組的設定。
+- 選擇伺服器並讓 Bot 離開；提交後會再要求一次確認。
+- 登出；登入會使用 HttpOnly、SameSite Cookie，並限制登入失敗次數。
+
+`/health` 仍是供 Render 等服務使用的公開健康檢查網址。正式部署請使用 HTTPS、設定獨立且夠長的後台密碼，不要把 `.env` 或密碼提交到版本控制。`WEB_SECURE_COOKIE` 預設開啟；本機使用未加密的 HTTP 測試時，需在 `.env` 設為 `WEB_SECURE_COOKIE=false`。
+
+## 10. Slash Command 使用方式
 
 所有指令都是中文，輸入 `/歡迎`、`/離開`、`/自動身分組`、`/設定` 後 Discord 會自動列出選項。訊息內容中可用 `
 ` 換行。
@@ -138,7 +155,7 @@ Discord 名稱常含花體字、符號、Emoji 或其他語言。程式會：
 
 想支援更多文字（阿拉伯文、泰文等）：把對應的 Noto Sans `.ttf` / `.otf` 放進 `assets/fonts/` 即可，程式會自動使用，不用改程式碼。字型只有用到時才會載入，不會增加平常的記憶體用量。
 
-## 10. 權限設定
+## 11. 權限設定
 
 - 所有設定指令只有 **Administrator** 或 **Manage Server** 可使用；一般成員看不到，也會被程式再次擋下。
 - 機器人需要：View Channels、Send Messages、Embed Links、Attach Files、Manage Roles。
@@ -158,7 +175,7 @@ Discord 名稱常含花體字、符號、Emoji 或其他語言。程式會：
 - 間隔由 `STATUS_INTERVAL_SECONDS` 控制。Discord 限制約 20 秒內 5 次狀態更新，**不要低於 5 秒**
 - 機器人帳號無法使用「自訂狀態」的表情符號欄位，所以表情符號直接寫在文字裡
 
-## 11. 常見問題
+## 12. 常見問題
 
 **Slash Commands 沒有出現？** 確認邀請時勾了 `applications.commands`、`SYNC_COMMANDS=true`，等 1–2 分鐘或重開 Discord。
 
@@ -172,14 +189,14 @@ Discord 名稱常含花體字、符號、Emoji 或其他語言。程式會：
 
 **資料表** `database.init_db()` 每次啟動執行 `CREATE TABLE IF NOT EXISTS`：`guild_settings`、`welcome_settings`、`leave_settings`、`autorole_settings`。
 
-## 12. 512MB RAM 部署建議
+## 13. 512MB RAM 部署建議
 
 - 只開 `guilds` + `members` Intent；關閉訊息與成員快取，不下載成員清單
 - 除了狀態輪播（每 5 秒送出一個很小的 Gateway 訊息）外，完全事件驅動；SQLite 即開即關
 - 圖片一次只渲染一張，用完立即 `close()`
 - 單一進程、venv、日誌只輸出 stdout、第一次成功後 `SYNC_COMMANDS=false`
 
-## 13. 部署到 Render + UptimeRobot + GitHub
+## 14. 部署到 Render + UptimeRobot + GitHub
 
 **流程**：程式碼放 GitHub → Render 自動部署 → UptimeRobot 定時 ping 保持喚醒。
 
@@ -193,8 +210,8 @@ Discord 名稱常含花體字、符號、Emoji 或其他語言。程式會：
    建議使用 **Private** 儲存庫。
 2. **Render**：Dashboard → **New → Blueprint** → 選該儲存庫（讀取 `render.yaml`）。
    或手動建立 **Web Service**：Build `pip install -r requirements.txt`、Start `python bot.py`、Plan Free。
-   在 **Environment** 新增 `DISCORD_TOKEN`（必填）與 `PYTHON_VERSION=3.11.9`。
-3. 部署完成後複製網址（例如 `https://welcome-bot-xxxx.onrender.com`），開啟 `/health` 應顯示 `OK`。
+   在 **Environment** 新增 `DISCORD_TOKEN`、`WEB_USERNAME`、`WEB_PASSWORD`（皆必填）與 `PYTHON_VERSION=3.11.9`。
+3. 部署完成後複製網址（例如 `https://welcome-bot-xxxx.onrender.com`），以後台帳密開啟首頁；`/health` 應顯示 `OK`。
 4. **UptimeRobot**：Add New Monitor → **HTTP(s)** → URL 填 `https://welcome-bot-xxxx.onrender.com/health` → 間隔 5 分鐘。
    Render 免費版閒置 15 分鐘會休眠，5 分鐘一次的 ping 可避免休眠。
 
@@ -205,7 +222,7 @@ Discord 名稱常含花體字、符號、Emoji 或其他語言。程式會：
 
 免費方案每月 750 小時，剛好夠一個服務 24 小時運行；RAM 同為 512MB。
 
-## 14. 使用 Turso 雲端資料庫（建議搭配 Render 免費版）
+## 15. 使用 Turso 雲端資料庫（建議搭配 Render 免費版）
 
 Turso 是雲端 SQLite，免費方案不需信用卡（目前為 100 個資料庫、5GB、每月 5 億次讀取、1000 萬次寫入，額度以官網為準）。
 本專案只存各伺服器的設定，用量遠低於上限。
@@ -233,7 +250,7 @@ Turso 是雲端 SQLite，免費方案不需信用卡（目前為 100 個資料�
 - Turso 暫時連不上時，指令會回覆「目前無法讀取或儲存設定」，已讀取過的設定仍可繼續發送歡迎訊息，機器人不會崩潰。
 - 免費方案的額度與規則可能調整，請以 Turso 官網為準。
 
-## 15. 用 Wispbyte 分擔畫圖（選用）
+## 16. 用 Wispbyte 分擔畫圖（選用）
 
 **分工**：Render 負責連線 Discord 和處理指令，Wispbyte 只負責產生歡迎圖片。畫圖是整個專案唯一吃 CPU 的工作，交給另一台主機後，Render 的 0.1 CPU 就輕鬆很多。
 

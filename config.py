@@ -16,8 +16,13 @@ TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 SYNC_COMMANDS = os.getenv("SYNC_COMMANDS", "true").strip().lower() in {"1", "true", "yes", "on"}
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()
 # Render (and similar hosts) set PORT for web services. When present, a tiny health
-# check server starts so uptime monitors can ping the bot. 0 = no web server.
+# check server and admin dashboard start. 0 = no web server.
 PORT = int(os.getenv("PORT", "0") or 0)
+WEB_USERNAME = os.getenv("WEB_USERNAME", "").strip()
+WEB_PASSWORD = os.getenv("WEB_PASSWORD", "")
+WEB_SECURE_COOKIE = os.getenv("WEB_SECURE_COOKIE", "true").strip().lower() not in {
+    "0", "false", "no", "off",
+}
 
 # Optional external database (Turso). When both are set, settings are stored there
 # instead of the local SQLite file, so they survive redeploys on hosts with a

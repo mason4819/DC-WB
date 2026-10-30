@@ -72,8 +72,8 @@ class WelcomeBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         await database.init_db()
-        # Health check endpoint for Render / UptimeRobot (only when PORT is set).
-        self._health_runner = await keepalive.start(config.PORT)
+        # Health check and admin dashboard start when PORT is set.
+        self._health_runner = await keepalive.start(config.PORT, self)
         for extension in EXTENSIONS:
             await self.load_extension(extension)
         if config.SYNC_COMMANDS:
