@@ -1,21 +1,28 @@
-"""Rotating bot status. Everything for this feature lives in this one file.
+"""Rotating bot status that says who is on duty and who is backing up. All in this one file.
 
-- Edit STATUSES below to change the texts. Each item is (activity type, text).
-  {servers} and {members} are replaced with live numbers (read from memory, no API calls).
-- STATUS_INTERVAL_SECONDS is how often the status changes. Discord allows about
-  5 presence updates per 20 seconds, so do not go below 5.
-- Set STATUS_ROTATION=false in the environment to switch the feature off.
-- Cost: one tiny gateway message every few seconds. No database, no HTTP requests.
+This host is the one connected to Discord, so it is "on duty" ({duty} = its NODE_NAME).
+The other host (learned from the heartbeat in ha.py) is the helper ({backup}). The pool of
+texts changes with the situation:
+  SOLO         no other host configured (or not checked yet)
+  BACKUP_UP    the other host is up and on standby; OFFLOAD texts are added while it draws images for us
+  BACKUP_DOWN  the other host is not answering
+
+Edit the lists below to change the texts. Each item is (activity type, text). Placeholders:
+{duty} {backup} {servers} {members}. Discord allows about 5 presence updates per 20 seconds,
+so STATUS_INTERVAL_SECONDS must not go below 5. Set STATUS_ROTATION=false to switch it off.
+Cost: one tiny gateway message every few seconds. No database, no HTTP requests.
 """
-import itertools
 import logging
 import os
 import random
+import time
 
 import discord
 from discord.ext import commands, tasks
 
-import config  # noqa: F401  (importing it loads the .env file)
+import config
+import ha
+from utils import remote
 
 log = logging.getLogger(__name__)
 
@@ -25,45 +32,61 @@ PLAYING = discord.ActivityType.playing
 WATCHING = discord.ActivityType.watching
 LISTENING = discord.ActivityType.listening
 
-STATUSES = [
-    (PLAYING,   "0.1 顆 CPU 苟活中"),
-    (PLAYING,   "512MB 還能撐多久"),
-    (WATCHING,  "RAM 又少了"),
-    (LISTENING, "CPU 在哀嚎"),
-    (PLAYING,   "龜速運行中"),
-    (WATCHING,  "免費主機真香"),
-    (PLAYING,   "今天也在正常運作"),
-    (LISTENING, "誰能捐我一點 RAM"),
-    (WATCHING,  "CPU 快往生了"),
-    (PLAYING,   "別催，跑不動"),
-    (WATCHING,  "人太多會炸"),
-    (PLAYING,   "{members} 個人擠 512MB"),
-    (LISTENING, "沒有風扇也能過熱"),
-    (PLAYING,   "窮鬼主機"),
-    (WATCHING,  "0.1 CPU 思考中"),
-    (PLAYING,   "{servers} 個群靠我撐"),
-    (WATCHING,  "今天應該不會炸吧"),
-    (PLAYING,   "活著就好"),
-    (LISTENING, "RAM 借我一下"),
-    (WATCHING,  "別再開功能了"),
-    (PLAYING,   "免費的就別要求太多"),
-    (WATCHING,  "又是哪個功能在吃 RAM"),
-    (PLAYING,   "我真的盡力了"),
-    (LISTENING, "CPU：我想下班"),
-    (PLAYING,   "低配也要有尊嚴"),
-    (WATCHING,  "重啟就能解決的問題"),
-    (PLAYING,   "今天也沒被 OOM 殺掉"),
-    (WATCHING,  "不要再加伺服器了"),
-    (PLAYING,   "能動就別動它"),
-    (LISTENING, "主機快撐不住了"),
+SOLO = [
+    (WATCHING,  "{duty} 顧著 {servers} 個伺服器"),
+    (PLAYING,   "{members} 個人都在等 {duty}"),
+    (WATCHING,  "{duty} 今天又沒人替班"),
+    (PLAYING,   "{duty}：怎麼又是我"),
+    (LISTENING, "{duty} 的下班時間遙遙無期"),
+    (WATCHING,  "{duty} 看著 {servers} 個伺服器發呆"),
+    (PLAYING,   "{duty} 還活著，伺服器就還活著"),
+    (WATCHING,  "{members} 個人，真的顧得完嗎"),
+    (PLAYING,   "{duty} 正在等一個永遠不會發生的下班"),
+    (LISTENING, "又有人找 {duty} 了"),
 ]
+
+BACKUP_UP = [
+    (WATCHING,  "{duty} 上班，{backup} 蹺班"),
+    (PLAYING,   "{backup} 在線，先不用怕"),
+    (WATCHING,  "{duty} 工作，{backup} 監工"),
+    (PLAYING,   "{backup} 今天最好不要出事"),
+    (LISTENING, "{duty} 正在叫 {backup} 起床"),
+    (WATCHING,  "{backup}：有事再叫我"),
+    (PLAYING,   "{duty} 和 {backup} 都別想下班"),
+    (WATCHING,  "{servers} 個伺服器，兩個人輪流受苦"),
+    (PLAYING,   "{members} 個人，兩台機器在扛"),
+    (LISTENING, "{backup} 有聽到嗎，該你了"),
+]
+
+OFFLOAD = [
+    (PLAYING,   "{backup} 又被抓去畫圖了"),
+    (WATCHING,  "{duty} 把畫圖工作丟給 {backup}"),
+    (PLAYING,   "{backup}：不是說好只待命嗎"),
+    (LISTENING, "{duty} 又在催 {backup} 交圖"),
+    (PLAYING,   "{backup} 正在趕圖，別催"),
+    (WATCHING,  "{duty} 負責顧人，{backup} 負責畫圖"),
+    (PLAYING,   "{backup} 今天也逃不掉"),
+]
+
+BACKUP_DOWN = [
+    (WATCHING,  "{duty} 又要一個人上班了"),
+    (PLAYING,   "{backup} 人呢？人呢？"),
+    (WATCHING,  "{duty} 已經習慣沒有 {backup} 了"),
+    (LISTENING, "{duty} 呼叫 {backup}，沒反應"),
+    (PLAYING,   "{backup} 是不是又睡著了"),
+    (WATCHING,  "{servers} 個伺服器，全丟給 {duty}"),
+    (PLAYING,   "{members} 個人，{duty} 自己想辦法"),
+    (LISTENING, "{backup} 再不回來就要扣薪了"),
+    (PLAYING,   "{duty}：我真的會謝"),
+    (WATCHING,  "{backup} 的班表是不是排假的"),
+]
+
 
 class StatusCog(commands.Cog, name="Status"):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        order = STATUSES.copy()
-        random.shuffle(order)                 # different order after every restart
-        self._cycle = itertools.cycle(order)
+        self._mode = ""
+        self._queue: list = []
 
     async def cog_load(self) -> None:
         if os.getenv("STATUS_ROTATION", "true").strip().lower() in {"0", "false", "no", "off"}:
@@ -74,11 +97,26 @@ class StatusCog(commands.Cog, name="Status"):
     async def cog_unload(self) -> None:
         self.rotate.cancel()
 
+    def _pool(self) -> tuple[str, list]:
+        """Pick the texts that match the situation right now."""
+        if not config.PEER_URL or ha.peer["up"] is None:
+            return "solo", SOLO
+        if not ha.peer["up"]:
+            return "down", BACKUP_DOWN
+        if remote.is_enabled() and remote._down_until <= time.monotonic():
+            return "up+draw", BACKUP_UP + OFFLOAD
+        return "up", BACKUP_UP
+
     def _next_activity(self) -> discord.Activity:
-        kind, text = next(self._cycle)
-        if "{" in text:  # only count servers and members when the text needs them
-            members = sum(guild.member_count or 0 for guild in self.bot.guilds)
-            text = text.replace("{servers}", str(len(self.bot.guilds))).replace("{members}", str(members))
+        mode, pool = self._pool()
+        if mode != self._mode or not self._queue:       # new situation, or one full round done
+            self._mode, self._queue = mode, random.sample(pool, len(pool))
+        kind, text = self._queue.pop()
+        guilds = self.bot.guilds
+        text = (text.replace("{duty}", config.NODE_NAME)
+                    .replace("{backup}", ha.peer["name"] or "另一台")
+                    .replace("{servers}", str(len(guilds)))
+                    .replace("{members}", str(sum(guild.member_count or 0 for guild in guilds))))
         return discord.Activity(type=kind, name=text)
 
     @tasks.loop(seconds=STATUS_INTERVAL_SECONDS)

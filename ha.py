@@ -29,7 +29,11 @@ LEASE_TTL = 45
 CHECK_INTERVAL = 10
 FENCE_AFTER = 30
 CRASH_COOLDOWN = 30
-HEARTBEAT_SECONDS = 240      # well under Render's 15 minute idle limit
+PEER_DOWN_INTERVAL = 60      # the other host is not answering: look again every minute
+PEER_UP_INTERVAL = 300       # both hosts are up: every 5 minutes (well under Render's 15 minute idle limit)
+
+# What this host last learned about the other one. Shown by /status and /後臺 狀態.
+peer: dict = {"up": None, "since": None, "checked": None, "name": None, "role": None}   # times are unix seconds
 
 
 class Supervisor:
@@ -150,20 +154,38 @@ class Supervisor:
             log.warning("Could not release the lease; it will expire on its own")
 
 
-async def heartbeat(stop: asyncio.Event) -> None:
-    """Ping the other host regularly. Keeps a sleeping Render service awake and logs outages."""
+def _clean_name(value: object) -> Optional[str]:
+    """The other host's name, made safe for display."""
+    text = " ".join(str(value or "").split())[:30]
+    return text or None
+
+
+async def heartbeat(stop: asyncio.Event, *, up_interval: float = PEER_UP_INTERVAL,
+                    down_interval: float = PEER_DOWN_INTERVAL,
+                    check: Callable[[], Awaitable[Optional[dict]]] = remote.check_peer) -> None:
+    """Watch the other host.
+
+    The two hosts rarely start at the same time, so while the other one is not answering
+    this checks every minute and notices quickly when it comes online. Once both are up
+    it relaxes to every 5 minutes. The ping also wakes a sleeping Render free service.
+    """
     if not config.PEER_URL:
         return
-    was_up: Optional[bool] = None
     while not stop.is_set():
-        is_up = await remote.ping_peer()
-        if is_up != was_up:
+        info = await check()
+        is_up = info is not None
+        now = time.time()
+        peer["checked"] = now
+        peer["name"] = _clean_name(info.get("node")) if info else peer["name"]   # remember the name while it is down
+        peer["role"] = (info.get("role") if info else None)
+        if is_up != peer["up"]:
             if is_up:
-                log.info("The other host (%s) is reachable", config.PEER_URL)
+                log.info("The other host (%s) is reachable. Checking every %d s.", config.PEER_URL, up_interval)
             else:
-                log.warning("The other host (%s) is not reachable", config.PEER_URL)
-            was_up = is_up
+                log.warning("The other host (%s) is not reachable. Checking every %d s until it is back.",
+                            config.PEER_URL, down_interval)
+            peer["up"], peer["since"] = is_up, now
         try:
-            await asyncio.wait_for(stop.wait(), HEARTBEAT_SECONDS)
+            await asyncio.wait_for(stop.wait(), up_interval if is_up else down_interval)
         except asyncio.TimeoutError:
             pass

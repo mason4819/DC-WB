@@ -91,3 +91,20 @@ async def ping_peer() -> bool:
             return response.status == 200
     except (aiohttp.ClientError, asyncio.TimeoutError):
         return False
+
+
+async def check_peer() -> Optional[dict]:
+    """Ask the other host who it is. None = unreachable; a dict (maybe empty) = reachable.
+
+    The dict holds "node" (its NODE_NAME) and "role" ("leader" / "standby") when available.
+    """
+    if not config.PEER_URL:
+        return None
+    try:
+        async with _get_session().get(f"{config.PEER_URL}/status", timeout=aiohttp.ClientTimeout(total=30)) as response:
+            if response.status == 200:
+                data = await response.json(content_type=None)
+                return data if isinstance(data, dict) else {}
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        return None
+    return {} if await ping_peer() else None   # an older version without /status: /health still works

@@ -332,11 +332,21 @@ class BackendCog(commands.Cog, name="Backend"):
             f"延遲：{self.bot.latency * 1000:.0f} ms\n伺服器：{len(guilds)}　成員總數：{sum(g.member_count or 0 for g in guilds)}"))
 
         if config.PEER_URL:
-            peer = "✅ 連得到" if await remote.ping_peer() else "❌ 連不到"
+            if ha.peer["checked"] is None:           # the heartbeat has not run yet: look once now
+                info = await remote.check_peer()
+                ha.peer.update(up=info is not None, since=time.time(), checked=time.time(),
+                               name=(info or {}).get("node"), role=(info or {}).get("role"))
+            now = time.time()
+            who = f"**{ha.peer['name']}** " if ha.peer["name"] else ""
+            duty = {"leader": "（使用中）", "standby": "（待命）"}.get(ha.peer["role"] or "", "")
+            state = ("✅ " + who + "連得到" + duty) if ha.peer["up"] else ("❌ " + who + "連不到")
             offload = ""
-            if remote.is_enabled():
+            if remote.is_enabled() and ha.peer["up"]:
                 offload = "（畫圖暫停分擔，改本機）" if remote._down_until > time.monotonic() else "（畫圖交給對方）"
-            embed.add_field(name="對方主機", value=f"{peer} {offload}\n`{config.PEER_URL}`", inline=False)
+            every = ha.PEER_UP_INTERVAL if ha.peer["up"] else ha.PEER_DOWN_INTERVAL
+            embed.add_field(name="對方主機", inline=False, value=(
+                f"{state} {offload}\n持續 {_duration(now - ha.peer['since'])}　上次檢查 {int(now - ha.peer['checked'])} 秒前\n"
+                f"檢查間隔：{every} 秒（對方沒回應時每分鐘，兩台都在時每 5 分鐘）\n`{config.PEER_URL}`"))
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @backend.command(name="封鎖", description="封鎖一個伺服器：目前在裡面就離開，之後被邀請也會自動離開")

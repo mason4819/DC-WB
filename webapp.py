@@ -17,6 +17,7 @@ from aiohttp import web
 
 import busywork
 import config
+import ha
 from utils.image import RENDER_LOCK, build_welcome_image
 from utils.remote import sign
 
@@ -86,7 +87,7 @@ async def _render(request: web.Request) -> web.Response:
 
 def create_app(role: Callable[[], str]) -> web.Application:
     async def status(request: web.Request) -> web.Response:
-        return web.json_response({"node": config.NODE_NAME, "role": role()})
+        return web.json_response({"node": config.NODE_NAME, "role": role(), "peer": dict(ha.peer)})
 
     app = web.Application(client_max_size=MAX_REQUEST_BYTES)
     app.add_routes([web.get("/", _ok), web.get("/health", _ok), web.get("/status", status),
