@@ -80,3 +80,14 @@ async def render(avatar: Optional[bytes], display_name: str, server_name: str, m
 async def close() -> None:
     if _session is not None and not _session.closed:
         await _session.close()
+
+
+async def ping_peer() -> bool:
+    """GET /health on the other host. Also wakes it up if it is a sleeping free-tier service."""
+    if not config.PEER_URL:
+        return False
+    try:
+        async with _get_session().get(f"{config.PEER_URL}/health", timeout=aiohttp.ClientTimeout(total=30)) as response:
+            return response.status == 200
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        return False

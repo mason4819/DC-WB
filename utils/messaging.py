@@ -6,6 +6,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from utils.access import NotOwnerOrAdmin, is_owner_or_admin, require_authorized
+
 log = logging.getLogger(__name__)
 
 STYLE_CHOICES = [
@@ -15,26 +17,32 @@ STYLE_CHOICES = [
 
 
 class AdminGroup(app_commands.Group):
-    """Slash command group limited to Administrator or Manage Server.
+    """Setup command group. Who may use it is decided by utils/access.py.
 
-    default_permissions hides the commands from regular members in Discord's UI.
-    interaction_check enforces the rule again on the bot side, because server
-    owners can override command permissions in Integrations settings.
+    The group is visible to everyone in Discord's command list and the bot checks the
+    rule itself, so members added to the management list can use it without needing
+    the Manage Server permission. (Server owners can still hide or limit a command in
+    Server Settings > Integrations.)
     """
 
     def __init__(self, *, name: str, description: str) -> None:
-        super().__init__(
-            name=name,
-            description=description,
-            default_permissions=discord.Permissions(manage_guild=True),
-            guild_only=True,
-        )
+        super().__init__(name=name, description=description, guild_only=True)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        perms = interaction.permissions
-        if perms.administrator or perms.manage_guild:
+        return await require_authorized(interaction)
+
+
+class OwnerGroup(app_commands.Group):
+    """Group reserved for the server owner and Administrators (editing the management list)."""
+
+    def __init__(self, *, name: str, description: str) -> None:
+        super().__init__(name=name, description=description, guild_only=True,
+                         default_permissions=discord.Permissions(administrator=True))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if is_owner_or_admin(interaction):
             return True
-        raise app_commands.MissingPermissions(["manage_guild"])
+        raise NotOwnerOrAdmin()
 
 
 async def reply(interaction: discord.Interaction, text: str) -> None:

@@ -5,6 +5,7 @@ from discord.ext import commands
 
 import config
 import database
+from utils.access import require_authorized
 from utils.messaging import channel_warnings, get_bot_member, role_problem
 
 
@@ -26,8 +27,7 @@ class SettingsCog(commands.Cog, name="Settings"):
 
     @app_commands.command(name="設定", description="查看歡迎、離開與自動身分組的所有設定")
     @app_commands.guild_only()
-    @app_commands.default_permissions(manage_guild=True)
-    @app_commands.checks.has_permissions(manage_guild=True)
+    @app_commands.check(require_authorized)
     async def show_config(self, interaction: discord.Interaction) -> None:
         guild = interaction.guild
         welcome = await database.get_settings("welcome", guild.id)
@@ -73,6 +73,14 @@ class SettingsCog(commands.Cog, name="Settings"):
                 problem = role_problem(me, role) if me else None
                 if problem:
                     problems.append(problem)
+
+        access = await database.get_access(guild.id)
+        if access["user"] or access["role"]:
+            rule = (f"限定名單：{len(access['user'])} 位成員、{len(access['role'])} 個身分組\n"
+                    "（另外擁有者與管理員永遠可以使用）")
+        else:
+            rule = "未設定名單：擁有「管理伺服器」或「管理員」權限即可使用"
+        embed.add_field(name="指令管理", value=rule, inline=False)
 
         if problems:
             embed.add_field(name="⚠️ 發現的問題", value="\n".join(f"• {p}" for p in problems)[:1000],

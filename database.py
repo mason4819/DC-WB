@@ -52,6 +52,22 @@ SCHEMA_STATEMENTS = [
         message    TEXT    NOT NULL,
         use_embed  INTEGER NOT NULL DEFAULT 1
     )""",
+    """CREATE TABLE IF NOT EXISTS node_lease (
+        name       TEXT PRIMARY KEY,
+        holder     TEXT NOT NULL,
+        expires_at INTEGER NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS access_list (
+        guild_id  INTEGER NOT NULL REFERENCES guild_settings(guild_id) ON DELETE CASCADE,
+        kind      TEXT    NOT NULL CHECK (kind IN ('user', 'role')),
+        target_id INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, kind, target_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS blocked_guilds (
+        guild_id   INTEGER PRIMARY KEY,
+        name       TEXT NOT NULL,
+        blocked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )""",
     """CREATE TABLE IF NOT EXISTS autorole_settings (
         guild_id INTEGER PRIMARY KEY REFERENCES guild_settings(guild_id) ON DELETE CASCADE,
         enabled  INTEGER NOT NULL DEFAULT 0,
@@ -200,6 +216,20 @@ async def init_db() -> None:
     log.info("Database ready (%s)", _backend.name)
 
 
+def backend_name() -> str:
+    return _backend.name if _backend is not None else "not ready"
+
+
+def cache_size() -> int:
+    return len(_cache)
+
+
+def clear_cache() -> None:
+    """Forget every cached row. Called when this host becomes the active bot, because the
+    other host may have changed settings while this one was on standby."""
+    _cache.clear()
+
+
 async def close() -> None:
     if _backend is not None:
         await _backend.close()
@@ -253,3 +283,144 @@ async def update_settings(kind: str, guild_id: int, **fields: Any) -> None:
     cached = _cache.get((kind, guild_id))  # keep the cache in step, only after a successful write
     if cached is not None:
         cached.update(fields)
+
+
+# ------------------------------------------------------------ failover lease
+# One row says which host currently owns the Discord connection. Expiry is judged
+# with the database's own clock, so the two hosts never have to agree on the time.
+LEASE_NAME = "discord"
+_DB_NOW = "CAST(strftime('%s','now') AS INTEGER)"
+
+
+async def try_acquire_lease(holder: str, ttl: int) -> bool:
+    """Take or renew the lease. True only if `holder` owns it afterwards (atomic)."""
+    statement = (
+        f"""INSERT INTO node_lease (name, holder, expires_at) VALUES (?, ?, {_DB_NOW} + ?)
+            ON CONFLICT(name) DO UPDATE SET holder = excluded.holder, expires_at = excluded.expires_at
+            WHERE node_lease.holder = excluded.holder OR node_lease.expires_at <= {_DB_NOW}
+            RETURNING holder""",
+        (LEASE_NAME, holder, ttl),
+    )
+    rows = (await _backend.run([statement]))[0]
+    return bool(rows) and rows[0]["holder"] == holder
+
+
+async def release_lease(holder: str) -> None:
+    """Give the lease up immediately so the other host can take over without waiting."""
+    await _backend.run([("UPDATE node_lease SET expires_at = 0 WHERE name = ? AND holder = ?",
+                         (LEASE_NAME, holder))])
+
+
+# ------------------------------------------------------- command access list
+# Which members and roles may use the setup commands (besides the owner and Administrators).
+MAX_ACCESS_ENTRIES = 25  # per kind (users / roles) per server
+
+
+async def get_access(guild_id: int) -> dict[str, list[int]]:
+    """Return {"user": [ids], "role": [ids]}. Read once per server, then served from memory."""
+    key = ("access", guild_id)
+    cached = _cache.get(key)
+    if cached is None:
+        rows = (await _backend.run([("SELECT kind, target_id FROM access_list WHERE guild_id = ?",
+                                     (guild_id,))]))[0]
+        cached = {"user": [r["target_id"] for r in rows if r["kind"] == "user"],
+                  "role": [r["target_id"] for r in rows if r["kind"] == "role"]}
+        if len(_cache) >= _CACHE_LIMIT:
+            _cache.clear()
+        _cache[key] = cached
+    return {kind: list(ids) for kind, ids in cached.items()}
+
+
+async def add_access(guild_id: int, kind: str, target_id: int) -> str:
+    """Add a member or role. Returns "added", "exists" or "full"."""
+    current = await get_access(guild_id)
+    if target_id in current[kind]:
+        return "exists"
+    if len(current[kind]) >= MAX_ACCESS_ENTRIES:
+        return "full"
+    await _backend.run([
+        ("INSERT OR IGNORE INTO guild_settings (guild_id) VALUES (?)", (guild_id,)),
+        ("INSERT OR IGNORE INTO access_list (guild_id, kind, target_id) VALUES (?, ?, ?)",
+         (guild_id, kind, target_id)),
+    ])
+    _cache[("access", guild_id)] = {**current, kind: [*current[kind], target_id]}
+    return "added"
+
+
+async def remove_access(guild_id: int, kind: str, target_id: int) -> bool:
+    """Remove a member or role. Returns False if it was not on the list."""
+    current = await get_access(guild_id)
+    if target_id not in current[kind]:
+        return False
+    await _backend.run([("DELETE FROM access_list WHERE guild_id = ? AND kind = ? AND target_id = ?",
+                         (guild_id, kind, target_id))])
+    _cache[("access", guild_id)] = {**current, kind: [i for i in current[kind] if i != target_id]}
+    return True
+
+
+async def clear_access(guild_id: int) -> None:
+    """Empty the list, which returns the server to the default rule (Manage Server)."""
+    await _backend.run([("DELETE FROM access_list WHERE guild_id = ?", (guild_id,))])
+    _cache[("access", guild_id)] = {"user": [], "role": []}
+
+
+# ------------------------------------------------------------ back office
+MAX_BLOCKED = 500
+
+
+async def peek_settings(kind: str, guild_id: int) -> Optional[dict[str, Any]]:
+    """Read one server's settings WITHOUT creating default rows. None if it never configured them."""
+    cached = _cache.get((kind, guild_id))
+    if cached is not None:
+        return dict(cached)
+    table, _ = _TABLES[kind]
+    rows = (await _backend.run([(f"SELECT * FROM {table} WHERE guild_id = ?", (guild_id,))]))[0]
+    return rows[0] if rows else None
+
+
+async def delete_guild_data(guild_id: int) -> None:
+    """Remove everything stored for a server (settings, management list)."""
+    tables = ("access_list", "welcome_settings", "leave_settings", "autorole_settings", "guild_settings")
+    await _backend.run([(f"DELETE FROM {table} WHERE guild_id = ?", (guild_id,)) for table in tables])
+    for key in [key for key in _cache if key[1] == guild_id]:
+        _cache.pop(key, None)
+
+
+async def get_blocked() -> dict[int, str]:
+    """Servers the bot must leave on sight: {guild_id: name}."""
+    cached = _cache.get(("blocked", 0))
+    if cached is None:
+        rows = (await _backend.run([("SELECT guild_id, name FROM blocked_guilds", ())]))[0]
+        cached = {"items": {row["guild_id"]: row["name"] for row in rows}}
+        _cache[("blocked", 0)] = cached
+    return dict(cached["items"])
+
+
+async def add_blocked(guild_id: int, name: str) -> str:
+    """Returns "added", "exists" or "full"."""
+    current = await get_blocked()
+    if guild_id in current:
+        return "exists"
+    if len(current) >= MAX_BLOCKED:
+        return "full"
+    await _backend.run([("INSERT OR REPLACE INTO blocked_guilds (guild_id, name) VALUES (?, ?)", (guild_id, name))])
+    _cache[("blocked", 0)] = {"items": {**current, guild_id: name}}
+    return "added"
+
+
+async def remove_blocked(guild_id: int) -> bool:
+    current = await get_blocked()
+    if guild_id not in current:
+        return False
+    await _backend.run([("DELETE FROM blocked_guilds WHERE guild_id = ?", (guild_id,))])
+    current.pop(guild_id)
+    _cache[("blocked", 0)] = {"items": current}
+    return True
+
+
+async def get_lease() -> Optional[dict[str, Any]]:
+    """Who owns the failover lease and for how many more seconds (database clock)."""
+    rows = (await _backend.run([(
+        f"SELECT holder, expires_at - {_DB_NOW} AS seconds_left FROM node_lease WHERE name = ?",
+        (LEASE_NAME,))]))[0]
+    return rows[0] if rows else None

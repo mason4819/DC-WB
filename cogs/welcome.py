@@ -12,6 +12,7 @@ import config
 import database
 from utils import image as imaging
 from utils import remote
+import busywork
 from utils.formatter import VARIABLES_DESCRIPTION, VARIABLES_HELP, clean_template, render_message
 from utils.messaging import (STYLE_CHOICES, AdminGroup, build_message_kwargs, channel_warnings,
                              deliver, reply)
@@ -27,8 +28,6 @@ class WelcomeCog(commands.Cog, name="Welcome"):
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        # Only one image is rendered at a time, which caps CPU and RAM during join bursts.
-        self._image_lock = asyncio.Semaphore(1)
 
     # ------------------------------------------------------------------ events
     @commands.Cog.listener()
@@ -78,11 +77,12 @@ class WelcomeCog(commands.Cog, name="Welcome"):
                     buffer = io.BytesIO(png)
 
             if buffer is None:  # no worker, or it failed: draw locally, one image at a time
-                async with self._image_lock:
-                    buffer = await asyncio.to_thread(
-                        imaging.build_welcome_image, avatar_bytes, member.display_name,
-                        member.guild.name, member.guild.member_count or 0, background, member.name,
-                    )
+                async with imaging.RENDER_LOCK:  # one image at a time, shared with the other host's requests
+                    with busywork.busy():
+                        buffer = await asyncio.to_thread(
+                            imaging.build_welcome_image, avatar_bytes, member.display_name,
+                            member.guild.name, member.guild.member_count or 0, background, member.name,
+                        )
             return discord.File(buffer, filename="welcome.png")
         except Exception:
             log.exception("Welcome image generation failed in guild %s", member.guild.id)
@@ -203,7 +203,7 @@ class WelcomeCog(commands.Cog, name="Welcome"):
                 return
             try:
                 data = await background.read()
-                async with self._image_lock:
+                async with imaging.RENDER_LOCK:
                     await asyncio.to_thread(imaging.save_custom_background, data, destination)
             except imaging.BackgroundError as exc:
                 await reply(interaction, f"❌ {exc}")

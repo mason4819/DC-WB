@@ -9,12 +9,13 @@
 - **離開系統**：指定頻道、自訂訊息、純文字 / Embed
 - **自動身分組**：每個伺服器獨立設定；權限不足時不會崩潰，並會在頻道提醒管理員
 - **歡迎圖片**：1200×406，圓形頭像、深色圓角卡片；內建多種備援字型，特殊字元、花體字、Emoji 名稱都不會變成方塊
-- **分擔畫圖（選用）**：可把歡迎圖片交給 Wispbyte 的 worker 繪製，失敗時自動改回本機
+- **雙主機備援（選用）**：Render 與 Wispbyte 都跑機器人，任何一台掛掉（包含 Render）另一台自動接手，平常互相分擔畫圖
+- **後臺管理**：機器人擁有者可在 Discord 內查看所有伺服器、選擇要離開哪一個、封鎖伺服器、查看主機狀態
 - **輪播狀態**：每 5 秒換一個狀態（含表情符號，也會顯示伺服器數與成員數），全部寫在 `cogs/status.py` 一個檔案裡
-- **Web 管理後台**：帳密登入、查看伺服器與設定，並可二次確認後讓 Bot 離開選定伺服器
+- **指令管理名單**：可指定哪些成員或身分組能使用設定指令，其他人（包含只有「管理伺服器」的人）不能操作
 - **全中文介面**：所有 Slash 指令、選項與機器人回覆都是中文
 - **訊息變數**：`{user}` `{username}` `{displayname}` `{server}` `{member_count}` `{user_id}`
-- 各伺服器功能設定存在 SQLite，重啟後保留；每個伺服器完全獨立
+- 所有設定存在 SQLite，重啟後保留；每個伺服器完全獨立
 
 ## 2. 系統需求
 
@@ -70,21 +71,20 @@ cp .env.example .env      # Windows: copy .env.example .env
 
 ```
 DISCORD_TOKEN=你的機器人Token
-WEB_USERNAME=你設定的後台帳號
-WEB_PASSWORD=請設定一組夠長且不重複使用的密碼
-PORT=8080
-WEB_SECURE_COOKIE=false
 SYNC_COMMANDS=true
 LOG_LEVEL=INFO
 ```
 
 - `SYNC_COMMANDS`：第一次啟動需要 `true` 來註冊 Slash Commands；之後可改成 `false`。
-- `WEB_USERNAME` / `WEB_PASSWORD`：後台登入帳號與密碼；設定在主機環境變數或 `.env`，不要提交到 Git。
-- `PORT`：有設定時啟動管理後台及健康檢查網頁（Render 會自動提供）。
-- `WEB_SECURE_COOKIE`：預設 `true`，正式 HTTPS 網站請保持開啟；本機用 HTTP 測試時才設為 `false`。
 - `DATA_DIR`（選填）：資料庫與自訂背景的資料夾，預設是專案內的 `data/`。
 - `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN`（選填）：兩個都填就改用 Turso 雲端資料庫保存設定，詳見第 14 節。
 - `STATUS_ROTATION`（選填）：填 `false` 可關閉狀態輪播。
+- `PORT`（選填）：有設定時才會啟動網頁服務（`/health`、`/status`）。Render 會自動提供；Wispbyte 會讀 `SERVER_PORT`。
+- `OWNER_IDS`（選填）：能使用 `/後臺` 的 Discord 使用者 ID，多個用逗號隔開。不填就用 Developer Portal 裡的應用程式擁有者。
+- `ADMIN_GUILD_ID`（選填）：填一個伺服器 ID，`/後臺` 指令就只會出現在那個伺服器。
+- `NODE_NAME`（雙主機備援用）：這台主機的名字，例如 `render`、`wispbyte`。
+- `PEER_URL` / `IMAGE_WORKER_URL` / `IMAGE_WORKER_SECRET`（雙主機備援用）：詳見第 15 節。
+- `KEEP_BUSY` / `KEEP_BUSY_PERCENT`（選填）：閒置時的低用量計算，預設開啟、約 1% 單核，詳見第 15 節。
 
 ## 7. 安裝 requirements
 
@@ -102,17 +102,7 @@ python bot.py
 
 資料表會在第一次啟動時自動建立（`data/bot.db`），不需要手動初始化。
 
-## 9. Web 管理後台
-
-設定 `WEB_USERNAME`、`WEB_PASSWORD` 與 `PORT` 後，開啟 `http://localhost:PORT/`（Render 使用部署網址）並登入。後台可：
-
-- 查看 Bot 所在的伺服器、ID、成員數，以及歡迎、離開、自動身分組的設定。
-- 選擇伺服器並讓 Bot 離開；提交後會再要求一次確認。
-- 登出；登入會使用 HttpOnly、SameSite Cookie，並限制登入失敗次數。
-
-`/health` 仍是供 Render 等服務使用的公開健康檢查網址。正式部署請使用 HTTPS、設定獨立且夠長的後台密碼，不要把 `.env` 或密碼提交到版本控制。`WEB_SECURE_COOKIE` 預設開啟；本機使用未加密的 HTTP 測試時，需在 `.env` 設為 `WEB_SECURE_COOKIE=false`。
-
-## 10. Slash Command 使用方式
+## 9. Slash Command 使用方式
 
 所有指令都是中文，輸入 `/歡迎`、`/離開`、`/自動身分組`、`/設定` 後 Discord 會自動列出選項。訊息內容中可用 `
 ` 換行。
@@ -131,6 +121,8 @@ python bot.py
 | `/自動身分組 設定 身分組` | 設定新成員自動取得的身分組（並自動啟用） |
 | `/自動身分組 移除` · `/自動身分組 啟用` · `/自動身分組 停用` | 移除 / 啟用 / 停用 |
 | `/設定` | 顯示全部設定，並列出偵測到的權限問題 |
+| `/管理員 新增成員 成員` · `/管理員 新增身分組 身分組` | 把成員或身分組加入「管理名單」（僅擁有者與管理員可用） |
+| `/管理員 移除成員` · `/管理員 移除身分組` · `/管理員 列表` · `/管理員 清空` | 移除 / 查看 / 清空管理名單 |
 
 範例：
 
@@ -155,27 +147,35 @@ Discord 名稱常含花體字、符號、Emoji 或其他語言。程式會：
 
 想支援更多文字（阿拉伯文、泰文等）：把對應的 Noto Sans `.ttf` / `.otf` 放進 `assets/fonts/` 即可，程式會自動使用，不用改程式碼。字型只有用到時才會載入，不會增加平常的記憶體用量。
 
-## 11. 權限設定
+## 10. 權限設定
 
-- 所有設定指令只有 **Administrator** 或 **Manage Server** 可使用；一般成員看不到，也會被程式再次擋下。
-- 機器人需要：View Channels、Send Messages、Embed Links、Attach Files、Manage Roles。
-- **自動身分組**：機器人的最高身分組必須**高於**要發放的身分組。
+**誰可以使用設定指令（`/歡迎` `/離開` `/自動身分組` `/設定`）**
 
-### 修改輪播狀態
+| 伺服器狀態 | 可以使用的人 |
+| --- | --- |
+| **沒有設定管理名單**（預設） | 擁有者、管理員（Administrator）、擁有「管理伺服器」權限的成員 |
+| **已設定管理名單** | 擁有者、管理員、**名單內的成員**、**擁有名單內身分組的成員**。只有「管理伺服器」權限**不再通過** |
 
-打開 `cogs/status.py`，編輯最上方的 `STATUSES` 清單即可：
+- 擁有者與管理員永遠可以使用，不會被名單鎖在外面。
+- 編輯名單的 `/管理員` 指令**只有擁有者與管理員**可以用，名單內的人不能再加人，避免權限被轉手。
+- 一般成員用到時會看到「你沒有權限使用這個指令」，不會改到任何設定。
 
-```python
-(WATCHING, "📉 記憶體一點一點變少"),   # 顯示成「正在看 📉 記憶體一點一點變少」
-(PLAYING,  "🏠 {servers} 個伺服器，一顆小小的 CPU"),  # {servers} 會自動換成伺服器數
+**建議設定方式**
+
+```
+/管理員 新增身分組 身分組:@版主
+/管理員 新增成員 成員:@某位幹部
+/管理員 列表
 ```
 
-- 類型有 `PLAYING`（正在玩）、`WATCHING`（正在看）、`LISTENING`（正在聽）
-- 可用變數：`{servers}` 伺服器數、`{members}` 全部成員數
-- 間隔由 `STATUS_INTERVAL_SECONDS` 控制。Discord 限制約 20 秒內 5 次狀態更新，**不要低於 5 秒**
-- 機器人帳號無法使用「自訂狀態」的表情符號欄位，所以表情符號直接寫在文字裡
+- 名單每種（成員 / 身分組）最多 25 個；不能加入機器人、`@everyone` 或整合服務管理的身分組。
+- 設定指令對所有人都看得到（才能讓名單內的人使用），但沒有權限的人使用時會被擋下。想連選單都隱藏，可以到 Discord 的「伺服器設定 → 整合 → 這個機器人」針對指令調整可見對象。
+- 使用雙主機備援時，名單存在 Turso，兩台主機共用；沒有設定 Turso 時存在本機資料庫。
 
-## 12. 常見問題
+**機器人本身需要的權限**：View Channels、Send Messages、Embed Links、Attach Files、Manage Roles。
+**自動身分組**：機器人的最高身分組必須**高於**要發放的身分組。
+
+## 11. 常見問題
 
 **Slash Commands 沒有出現？** 確認邀請時勾了 `applications.commands`、`SYNC_COMMANDS=true`，等 1–2 分鐘或重開 Discord。
 
@@ -187,16 +187,16 @@ Discord 名稱常含花體字、符號、Emoji 或其他語言。程式會：
 
 **名稱出現方塊或缺字？** 已內建 Noto Sans 繁中 / 簡中 / 日文 / 韓文 / 符號 / Emoji（SIL OFL 授權）。仍缺的文字種類，請把對應字型放進 `assets/fonts/`，詳見第 9 節。檔名含 `Bold` 的檔案會用於粗體。
 
-**資料表** `database.init_db()` 每次啟動執行 `CREATE TABLE IF NOT EXISTS`：`guild_settings`、`welcome_settings`、`leave_settings`、`autorole_settings`。
+**資料表** `database.init_db()` 每次啟動執行 `CREATE TABLE IF NOT EXISTS`：`guild_settings`、`welcome_settings`、`leave_settings`、`autorole_settings`、`access_list`（管理名單）、`node_lease`（雙主機備援）。
 
-## 13. 512MB RAM 部署建議
+## 12. 512MB RAM 部署建議
 
 - 只開 `guilds` + `members` Intent；關閉訊息與成員快取，不下載成員清單
 - 除了狀態輪播（每 5 秒送出一個很小的 Gateway 訊息）外，完全事件驅動；SQLite 即開即關
 - 圖片一次只渲染一張，用完立即 `close()`
 - 單一進程、venv、日誌只輸出 stdout、第一次成功後 `SYNC_COMMANDS=false`
 
-## 14. 部署到 Render + UptimeRobot + GitHub
+## 13. 部署到 Render + UptimeRobot + GitHub
 
 **流程**：程式碼放 GitHub → Render 自動部署 → UptimeRobot 定時 ping 保持喚醒。
 
@@ -210,8 +210,8 @@ Discord 名稱常含花體字、符號、Emoji 或其他語言。程式會：
    建議使用 **Private** 儲存庫。
 2. **Render**：Dashboard → **New → Blueprint** → 選該儲存庫（讀取 `render.yaml`）。
    或手動建立 **Web Service**：Build `pip install -r requirements.txt`、Start `python bot.py`、Plan Free。
-   在 **Environment** 新增 `DISCORD_TOKEN`、`WEB_USERNAME`、`WEB_PASSWORD`（皆必填）與 `PYTHON_VERSION=3.11.9`。
-3. 部署完成後複製網址（例如 `https://welcome-bot-xxxx.onrender.com`），以後台帳密開啟首頁；`/health` 應顯示 `OK`。
+   在 **Environment** 新增 `DISCORD_TOKEN`（必填）與 `PYTHON_VERSION=3.11.9`。
+3. 部署完成後複製網址（例如 `https://welcome-bot-xxxx.onrender.com`），開啟 `/health` 應顯示 `OK`。
 4. **UptimeRobot**：Add New Monitor → **HTTP(s)** → URL 填 `https://welcome-bot-xxxx.onrender.com/health` → 間隔 5 分鐘。
    Render 免費版閒置 15 分鐘會休眠，5 分鐘一次的 ping 可避免休眠。
 
@@ -222,7 +222,7 @@ Discord 名稱常含花體字、符號、Emoji 或其他語言。程式會：
 
 免費方案每月 750 小時，剛好夠一個服務 24 小時運行；RAM 同為 512MB。
 
-## 15. 使用 Turso 雲端資料庫（建議搭配 Render 免費版）
+## 14. 使用 Turso 雲端資料庫（建議搭配 Render 免費版）
 
 Turso 是雲端 SQLite，免費方案不需信用卡（目前為 100 個資料庫、5GB、每月 5 億次讀取、1000 萬次寫入，額度以官網為準）。
 本專案只存各伺服器的設定，用量遠低於上限。
@@ -250,44 +250,94 @@ Turso 是雲端 SQLite，免費方案不需信用卡（目前為 100 個資料�
 - Turso 暫時連不上時，指令會回覆「目前無法讀取或儲存設定」，已讀取過的設定仍可繼續發送歡迎訊息，機器人不會崩潰。
 - 免費方案的額度與規則可能調整，請以 Turso 官網為準。
 
-## 16. 用 Wispbyte 分擔畫圖（選用）
+## 15. 雙主機備援：Render ⇄ Wispbyte（選用）
 
-**分工**：Render 負責連線 Discord 和處理指令，Wispbyte 只負責產生歡迎圖片。畫圖是整個專案唯一吃 CPU 的工作，交給另一台主機後，Render 的 0.1 CPU 就輕鬆很多。
+**目標**：兩台主機都跑完整的機器人。平常只有一台連 Discord（使用中），另一台待命；使用中的那台掛掉，不管是 Render 還是 Wispbyte，待命的那台會自動接手。
 
-```
-成員加入 → Render（機器人）─ 簽名請求 ─→ Wispbyte（worker.py 畫圖）
-                          ←──── PNG ────┘
-```
+**怎麼運作**
 
-- Wispbyte 連不上、逾時或回傳錯誤時，機器人**自動改回本機畫圖**，並在 1 分鐘內不再等它，所以歡迎訊息不會卡住。
-- 不設定相關變數就完全不啟用，行為跟以前一樣。
-- 請求用 HMAC-SHA256 簽名並檢查時間，沒有密鑰的人無法使用你的 worker。
-- worker 不挑主機，之後想換成其他主機，重做下面的步驟即可。
+- 兩台共用同一個 Turso 資料庫，裡面有一筆「租約」記錄現在誰是使用中。租約每 10 秒續約一次，45 秒沒續就視為失效。
+- 使用中的主機如果連續 30 秒確認不了租約（例如連不上資料庫），會**自己先**斷開 Discord，確保另一台接手時不會同時有兩個機器人在回應，避免重複發歡迎訊息。我用模擬測試驗證過：主機掛掉、關機、資料庫斷線、程式崩潰、手動讓出時都沒有出現兩台同時在線的時刻。
+- 正常關機或重新部署（Render 收到 SIGTERM）會立刻釋放租約，約 10 秒內換手；突然斷線約需 **45 到 60 秒**。這段空窗期加入或離開的成員不會收到訊息。
+- 待命的主機仍然運作網頁服務：使用中的主機會把畫歡迎圖片的工作交給它（`/render`），它連不上就改在本機畫。
+- 兩台每 4 分鐘互相 ping 對方的 `/health`。這會讓睡著的 Render 免費服務保持清醒（Render 只認外部 HTTP 請求）。**UptimeRobot 還是建議保留**，因為 Wispbyte 掛掉時需要有人叫醒 Render。
+- 換手後，新的使用中主機會先清掉記憶體快取，避免用到過期的設定。
 
-**步驟**
+**需求**：必須使用 Turso（第 14 節），否則兩台無法共用設定與租約。**沒有設定 Turso 時絕對不要在兩台主機同時執行**，會重複回應。
 
-1. **產生共用密鑰**（在自己電腦執行，複製輸出）：
-   ```bash
-   python -c "import secrets; print(secrets.token_hex(32))"
-   ```
-2. **建立 Wispbyte 伺服器**：選免費方案、Python 環境。
-3. **上傳專案**：把整個 WelcomeBot 資料夾傳上去（worker 會用到 `worker.py`、`config.py`、`utils/`、`assets/`）。
-4. **設定啟動檔與套件**：啟動檔填 `worker.py`；套件填 `requirements-worker.txt` 裡的三個：`Pillow`、`aiohttp`、`python-dotenv`。
-5. **設定環境變數**：新增 `IMAGE_WORKER_SECRET`，值填第 1 步的密鑰。worker 不需要 Discord Token，也不需要 Turso 變數。
-6. **啟動並確認網址**：在面板找到伺服器的 IP 與 Port，用瀏覽器開 `http://IP:Port/health`，看到 `OK` 就成功。worker 會依序讀取 `PORT`、`SERVER_PORT`、`WORKER_PORT`，都沒有則用 8080；Port 必須是面板分配給你的那一個。
-7. **回到 Render → Environment** 新增：
+**兩台主機都要上傳整個 WelcomeBot 資料夾並執行 `python bot.py`。**
+
+1. 產生共用密鑰（只用在兩台主機互相呼叫畫圖）：`python -c "import secrets; print(secrets.token_hex(32))"`
+2. **Render → Environment**：
 
 | Key | Value |
 | --- | --- |
-| `IMAGE_WORKER_URL` | `http://IP:Port`（不要加結尾斜線） |
-| `IMAGE_WORKER_SECRET` | 與 Wispbyte 相同的密鑰（需保密） |
+| `DISCORD_TOKEN` | 機器人 Token |
+| `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` | 與 Wispbyte 相同 |
+| `NODE_NAME` | `render` |
+| `PEER_URL` | Wispbyte 的網址 `http://IP:Port` |
+| `IMAGE_WORKER_URL` | 同上（讓 Render 把畫圖交給 Wispbyte；Render 只有 0.1 CPU，建議填） |
+| `IMAGE_WORKER_SECRET` | 步驟 1 的密鑰 |
+| `OWNER_IDS` | 你的 Discord 使用者 ID |
+| `PYTHON_VERSION` | `3.11.9` |
 
-重新部署後，到 Discord 執行 `/歡迎 預覽`。worker 為了省資源已關閉存取日誌；若想確認有分擔到，可暫時把 worker 關掉，Render 的 Logs 會出現 `Image worker unavailable`，代表機器人原本有在用它，並已改回本機畫圖。
+3. **Wispbyte**：啟動檔填 `bot.py`，套件用完整的 `requirements.txt`，環境變數：
 
-**注意**
-- 我無法替你確認 Wispbyte 面板的實際選項名稱與網路設定，上面是依一般流程寫的；如果面板沒有對外的 IP/Port，worker 就無法被 Render 連到，此時不要設定那兩個變數即可。
-- 連線是 `http://`，內容只有頭像、顯示名稱、伺服器名稱與成員數，經過簽名防冒用但**沒有加密**。若 Wispbyte 提供網域與 HTTPS，請改用 `https://` 網址。
-- 自訂背景圖仍存在 Render 的磁碟上，每次畫圖時會一起傳給 worker；預設橫幅則是 worker 自己的程式碼裡就有。
+| Key | Value |
+| --- | --- |
+| `DISCORD_TOKEN` | 同一個 Token |
+| `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` | 與 Render 相同 |
+| `NODE_NAME` | `wispbyte` |
+| `PEER_URL` | Render 的網址 `https://xxx.onrender.com` |
+| `IMAGE_WORKER_SECRET` | 同一組密鑰（讓它能替 Render 畫圖） |
+| `SYNC_COMMANDS` | `false` |
+| `OWNER_IDS` | 同上 |
+
+   Wispbyte 比較有餘裕時，**不要**填 `IMAGE_WORKER_URL`，讓它自己畫；Wispbyte 的實際 Port 變數請依面板為準（程式會讀 `PORT`、`SERVER_PORT`、`WORKER_PORT`）。
+4. **確認**：用瀏覽器開兩台的 `/status`，會顯示 `{"node": "...", "role": "leader"}` 或 `"standby"`，應該一台 leader、一台 standby。也可以在 Discord 用 `/後臺 狀態` 查看。
+
+**測試切換**：在 Discord 執行 `/後臺 讓出主機`，使用中的主機會離線幾分鐘，另一台約 10 秒內接手。
+
+**限制**
+
+- 自訂背景圖存在各主機的本機磁碟，換手後新主機找不到時會改用預設橫幅。
+- 沒有網頁服務的主機（面板沒給 Port）仍然可以參與備援，只是不能幫忙畫圖、也不能被對方 ping。
+- 我無法確認 Wispbyte 面板的實際選項與網路設定，請以面板為準。
+
+### 只當畫圖幫手（不備援）
+
+如果只想讓 Wispbyte 幫忙畫圖、不跑機器人：在 Wispbyte 執行 `python worker.py`（套件用 `requirements-worker.txt`，只需 `IMAGE_WORKER_SECRET`），Render 設定 `IMAGE_WORKER_URL` 與 `IMAGE_WORKER_SECRET` 即可。連不上時自動改在本機畫。
+
+### 閒置時的低用量計算
+
+兩台主機在沒事做時，會在背景用約 1% 單核做質數搜尋這類沒有實際用途的計算（`busywork.py`）。它會在真正畫圖時自動暫停。
+
+- 這**不能**阻止 Render 睡著，Render 只看外部 HTTP 請求，保持清醒靠的是 UptimeRobot 與對方主機的 ping。
+- 它會用掉真實的 CPU。Render 只有 0.1 核，1% 單核約等於它配額的一成；如果覺得變慢，在 Render 設 `KEEP_BUSY=false`。
+- 比例由 `KEEP_BUSY_PERCENT` 控制，上限固定 5%，也可以全部關閉。
+
+## 16. 後臺管理（機器人擁有者專用）
+
+在 Discord 內操作，不需要架網頁；全部回覆只有你自己看得到。能用的人是 `OWNER_IDS` 裡的使用者（沒填則是 Developer Portal 的應用程式擁有者），其他人會被擋下。建議再設定 `ADMIN_GUILD_ID`，讓這些指令只出現在你自己的伺服器。
+
+| 指令 | 說明 |
+| --- | --- |
+| `/後臺 伺服器 [關鍵字]` | 列出機器人所在的所有伺服器（依人數排序、分頁）。從下拉選單選一個，看詳細資料，再選擇離開方式 |
+| `/後臺 狀態` | 這台主機的角色、記憶體、延遲、資料庫、租約、對方主機是否連得到 |
+| `/後臺 封鎖 伺服器id` | 封鎖：目前在裡面就離開，之後被邀請也會自動離開 |
+| `/後臺 解除封鎖` · `/後臺 封鎖列表` | 解除 / 查看封鎖名單 |
+| `/後臺 讓出主機 [分鐘]` | 暫時把 Discord 連線交給另一台主機（雙主機備援時） |
+| `/後臺 同步指令` · `/後臺 清除快取` | 重新登錄斜線指令 / 清除記憶體快取 |
+
+**選擇要離開哪個伺服器**：`/後臺 伺服器` → 下拉選單選伺服器 → 看到擁有者、人數、機器人權限、歡迎 / 離開 / 自動身分組設定 → 三種離開方式，每種都會再問一次確認：
+
+- **離開伺服器**：只離開，設定保留，之後重新邀請可以繼續用。
+- **離開並清除設定**：離開，並刪除該伺服器在資料庫裡的設定與自訂背景。
+- **離開並封鎖**：離開、清除設定，並加入封鎖名單。
+
+伺服器很多時，用關鍵字（名稱或 ID）篩選。面板 5 分鐘後會失效，重新輸入指令即可。
+
+> 這是 Discord 內的管理介面。原本的需求有「不要 Web Dashboard」，所以沒有做網頁後臺；需要的話可以另外加。
 
 ## 專案結構
 
@@ -296,14 +346,16 @@ WelcomeBot/
 ├── bot.py              # 入口、錯誤處理、Intents
 ├── config.py           # 路徑、限制、預設文字
 ├── database.py         # SQLite（4 張資料表）
-├── keepalive.py        # Render / UptimeRobot 健康檢查
-├── worker.py           # 選用：在 Wispbyte 等第二台主機上專門畫歡迎圖片
+├── ha.py               # 雙主機備援（租約、自動切換、互相 ping）
+├── webapp.py           # /health、/status、/render（供對方主機畫圖）
+├── busywork.py         # 閒置時的低用量計算
+├── worker.py           # 選用：只畫圖、不跑機器人的幫手
 ├── requirements-worker.txt
 ├── render.yaml         # Render Blueprint
 ├── requirements.txt
 ├── .env.example
-├── cogs/               # welcome.py, leave.py, autorole.py, settings.py, status.py
-├── utils/              # image.py, formatter.py, messaging.py, remote.py
+├── cogs/               # welcome.py, leave.py, autorole.py, settings.py, access.py, backend.py, status.py
+├── utils/              # image.py, formatter.py, messaging.py, access.py, remote.py
 ├── assets/             # backgrounds/default.png, fonts/（Noto Sans 多語系備援字型）
 └── data/               # bot.db 與自訂背景（自動建立）
 ```

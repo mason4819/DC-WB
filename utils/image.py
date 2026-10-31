@@ -14,6 +14,7 @@ font supports are dropped instead of being drawn as boxes.
 Every image object is closed as soon as it is no longer needed and nothing
 is cached, so memory is released right after each render.
 """
+import asyncio
 import io
 import logging
 import unicodedata
@@ -27,6 +28,10 @@ import config
 log = logging.getLogger(__name__)
 
 RESAMPLE = Image.Resampling.LANCZOS
+
+# One image at a time per process (local requests and requests from the other host
+# share this lock), which caps CPU and RAM during bursts.
+RENDER_LOCK = asyncio.Semaphore(1)
 
 W, H = config.IMAGE_WIDTH, config.IMAGE_HEIGHT
 

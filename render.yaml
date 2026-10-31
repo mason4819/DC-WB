@@ -12,18 +12,18 @@ services:
         value: 3.11.9
       - key: DISCORD_TOKEN
         sync: false             # you type it in the Render dashboard, never in Git
-      - key: WEB_USERNAME
-        sync: false             # dashboard login username
-      - key: WEB_PASSWORD
-        sync: false             # use a unique, strong password
-      - key: WEB_SECURE_COOKIE
-        value: "true"
       - key: SYNC_COMMANDS
         value: "true"
       - key: TURSO_DATABASE_URL
         sync: false             # from the Turso dashboard (libsql://...)
       - key: TURSO_AUTH_TOKEN
         sync: false             # database token from Turso, keep it secret
+      - key: NODE_NAME
+        value: render
+      - key: PEER_URL
+        sync: false             # failover: public URL of the other host
+      - key: OWNER_IDS
+        sync: false             # your Discord user ID (back office)
       - key: IMAGE_WORKER_URL
         sync: false             # optional: http://host:port of worker.py (e.g. on Wispbyte)
       - key: IMAGE_WORKER_SECRET
