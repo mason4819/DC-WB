@@ -21,6 +21,9 @@ log = logging.getLogger(__name__)
 
 MESSAGE_HELP = "訊息內容，可用變數：" + VARIABLES_HELP
 MessageText = app_commands.Range[str, 1, config.MAX_MESSAGE_LENGTH]
+THEME_CHOICES = [app_commands.Choice(name=info["label"], value=key) for key, info in imaging.THEMES.items()]
+BACKGROUND_CHOICES = [app_commands.Choice(name="純色（簡約線條）", value="plain"),
+                      app_commands.Choice(name="預設橫幅（黑白）", value="banner")]
 
 
 class WelcomeCog(commands.Cog, name="Welcome"):
@@ -50,7 +53,7 @@ class WelcomeCog(commands.Cog, name="Welcome"):
         make_image = (lambda: self._make_image(member, settings)) if settings["image_enabled"] else None
         return await deliver(
             bot=self.bot, guild=member.guild, channel_id=settings["channel_id"], user=member,
-            text=text, use_embed=bool(settings["use_embed"]), colour=config.WELCOME_COLOR,
+            text=text, use_embed=bool(settings["use_embed"]), colour=imaging.theme_embed_colour(settings["theme"]),
             make_image=make_image, ping_user=True,
         )
 
@@ -63,16 +66,20 @@ class WelcomeCog(commands.Cog, name="Welcome"):
             except discord.DiscordException:
                 log.warning("Could not download the avatar of %s", member.id)
 
-            background = None
-            if settings["background_path"]:
+            background, banner = None, False
+            if settings["background_path"] == "builtin":          # the banner that ships with the bot
+                background, banner = config.DEFAULT_BACKGROUND, True
+            elif settings["background_path"]:                      # an image uploaded by the admins
                 candidate = config.DATA_DIR / settings["background_path"]
                 background = candidate if candidate.is_file() else None
+            theme = settings["theme"]
 
             buffer = None
             if remote.is_enabled():  # offload the drawing to the image worker if one is configured
                 png = await remote.render(
                     avatar_bytes, member.display_name, member.guild.name, member.guild.member_count or 0,
-                    background.read_bytes() if background else None, member.name)
+                    background.read_bytes() if background and not banner else None, member.name,
+                    banner=banner, theme=theme)
                 if png is not None:
                     buffer = io.BytesIO(png)
 
@@ -81,7 +88,7 @@ class WelcomeCog(commands.Cog, name="Welcome"):
                     with busywork.busy():
                         buffer = await asyncio.to_thread(
                             imaging.build_welcome_image, avatar_bytes, member.display_name,
-                            member.guild.name, member.guild.member_count or 0, background, member.name,
+                            member.guild.name, member.guild.member_count or 0, background, member.name, theme,
                         )
             return discord.File(buffer, filename="welcome.png")
         except Exception:
@@ -163,33 +170,47 @@ class WelcomeCog(commands.Cog, name="Welcome"):
         await database.update_settings("welcome", interaction.guild_id, **fields)
         await reply(interaction, "✅ 歡迎訊息已更新，可以用 `/歡迎 預覽` 查看。")
 
-    @welcome.command(name="圖片", description="設定歡迎圖片（不填任何選項則顯示目前設定）")
-    @app_commands.describe(enabled="開啟或關閉歡迎圖片",
-                           background="自訂背景圖（PNG 或 JPG，5MB 以內）",
-                           reset="還原成預設背景")
-    @app_commands.rename(enabled="啟用", background="背景", reset="還原預設")
+    @welcome.command(name="圖片", description="設定歡迎圖片的主題與背景（不填任何選項則顯示目前設定）")
+    @app_commands.describe(enabled="開啟或關閉歡迎圖片", theme="黑白色系：黑色、深灰、白色、淺灰",
+                           background_style="純色線條，或套用預設橫幅（會轉成黑白）",
+                           background="自訂背景圖（PNG 或 JPG，5MB 以內，會轉成黑白）",
+                           reset="還原成預設（黑色、純色）")
+    @app_commands.rename(enabled="啟用", theme="主題", background_style="背景樣式", background="背景",
+                         reset="還原預設")
+    @app_commands.choices(theme=THEME_CHOICES, background_style=BACKGROUND_CHOICES)
     async def welcome_image(self, interaction: discord.Interaction, enabled: Optional[bool] = None,
+                            theme: Optional[app_commands.Choice[str]] = None,
+                            background_style: Optional[app_commands.Choice[str]] = None,
                             background: Optional[discord.Attachment] = None,
                             reset: Optional[bool] = None) -> None:
         guild_id = interaction.guild_id
         settings = await database.get_settings("welcome", guild_id)
 
-        if enabled is None and background is None and not reset:
+        if enabled is None and theme is None and background_style is None and background is None and not reset:
+            path = settings["background_path"]
+            kind = "預設橫幅" if path == "builtin" else ("自訂圖片" if path else "純色")
             await reply(interaction,
                         f"歡迎圖片：**{'開啟' if settings['image_enabled'] else '關閉'}**\n"
-                        f"背景：**{'自訂' if settings['background_path'] else '預設'}**")
+                        f"主題：**{imaging.get_theme(settings['theme'])['label']}**\n背景：**{kind}**")
             return
 
         await interaction.response.defer(ephemeral=True)
         fields: dict = {}
         destination = config.CUSTOM_BACKGROUND_DIR / f"{guild_id}.jpg"
 
-        if reset:
-            fields["background_path"] = None
+        def drop_custom_file() -> None:
             try:
                 destination.unlink(missing_ok=True)
             except OSError:
                 log.warning("Could not delete %s", destination)
+
+        if reset:
+            fields.update(background_path=None, theme=imaging.DEFAULT_THEME)
+            drop_custom_file()
+
+        if background_style is not None:
+            fields["background_path"] = "builtin" if background_style.value == "banner" else None
+            drop_custom_file()
 
         if background is not None:
             content_type = (background.content_type or "").lower()
@@ -213,6 +234,8 @@ class WelcomeCog(commands.Cog, name="Welcome"):
                 return
             fields["background_path"] = f"backgrounds/{guild_id}.jpg"
 
+        if theme is not None:
+            fields["theme"] = theme.value
         if enabled is not None:
             fields["image_enabled"] = int(enabled)
 
@@ -239,7 +262,8 @@ class WelcomeCog(commands.Cog, name="Welcome"):
         member = interaction.user
         text = render_message(settings["message"], member, interaction.guild)
         file = await self._make_image(member, settings) if settings["image_enabled"] else None
-        kwargs = build_message_kwargs(member, text, bool(settings["use_embed"]), config.WELCOME_COLOR, file)
+        kwargs = build_message_kwargs(member, text, bool(settings["use_embed"]),
+                                      imaging.theme_embed_colour(settings["theme"]), file)
         await interaction.followup.send(ephemeral=True, **kwargs)
 
 

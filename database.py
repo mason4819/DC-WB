@@ -43,7 +43,8 @@ SCHEMA_STATEMENTS = [
         message         TEXT    NOT NULL,
         use_embed       INTEGER NOT NULL DEFAULT 1,
         image_enabled   INTEGER NOT NULL DEFAULT 0,
-        background_path TEXT
+        background_path TEXT,
+        theme           TEXT    NOT NULL DEFAULT 'black'
     )""",
     """CREATE TABLE IF NOT EXISTS leave_settings (
         guild_id   INTEGER PRIMARY KEY REFERENCES guild_settings(guild_id) ON DELETE CASCADE,
@@ -78,7 +79,7 @@ SCHEMA_STATEMENTS = [
 # Maps the short kind name used by the cogs to its table and editable columns.
 _TABLES = {
     "welcome": ("welcome_settings", {"enabled", "channel_id", "message", "use_embed",
-                                     "image_enabled", "background_path"}),
+                                     "image_enabled", "background_path", "theme"}),
     "leave": ("leave_settings", {"enabled", "channel_id", "message", "use_embed"}),
     "autorole": ("autorole_settings", {"enabled", "role_id"}),
 }
@@ -213,6 +214,7 @@ async def init_db() -> None:
         _backend = _LocalBackend()
     config.CUSTOM_BACKGROUND_DIR.mkdir(parents=True, exist_ok=True)
     await _backend.run([(sql, ()) for sql in SCHEMA_STATEMENTS])
+    await _migrate()
     log.info("Database ready (%s)", _backend.name)
 
 
@@ -228,6 +230,21 @@ def clear_cache() -> None:
     """Forget every cached row. Called when this host becomes the active bot, because the
     other host may have changed settings while this one was on standby."""
     _cache.clear()
+
+
+async def _migrate() -> None:
+    """Add columns introduced after the first release to tables that already exist."""
+    try:
+        columns = {row["name"] for row in (await _backend.run([("PRAGMA table_info(welcome_settings)", ())]))[0]}
+    except DatabaseError:
+        columns = set()
+    if "theme" not in columns:
+        try:
+            await _backend.run([("ALTER TABLE welcome_settings ADD COLUMN theme TEXT NOT NULL DEFAULT 'black'", ())])
+            log.info("Database updated: added welcome_settings.theme")
+        except DatabaseError as exc:
+            if "duplicate" not in str(exc).lower():     # already there is fine
+                raise
 
 
 async def close() -> None:

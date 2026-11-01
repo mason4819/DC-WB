@@ -18,7 +18,7 @@ from aiohttp import web
 import busywork
 import config
 import ha
-from utils.image import RENDER_LOCK, build_welcome_image
+from utils.image import DEFAULT_THEME, RENDER_LOCK, THEMES, build_welcome_image
 from utils.remote import sign
 
 log = logging.getLogger(__name__)
@@ -71,6 +71,9 @@ async def _render(request: web.Request) -> web.Response:
         member_count = int(data["member_count"])
         if not 0 <= member_count <= 10**9:
             raise ValueError("member_count")
+        theme = data.get("theme") if data.get("theme") in THEMES else DEFAULT_THEME   # older hosts send none
+        if background is None and data.get("banner") is True:
+            background = config.DEFAULT_BACKGROUND
     except (ValueError, KeyError, TypeError, binascii.Error):
         return web.Response(status=400, text="bad request")
 
@@ -78,7 +81,7 @@ async def _render(request: web.Request) -> web.Response:
         async with RENDER_LOCK:
             with busywork.busy():
                 image = await asyncio.to_thread(build_welcome_image, avatar, display_name, server_name,
-                                                member_count, background, alt_name)
+                                                member_count, background, alt_name, theme)
         return web.Response(body=image.getvalue(), content_type="image/png")
     except Exception:
         log.exception("Rendering a request from the other host failed")

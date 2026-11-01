@@ -43,7 +43,8 @@ def _get_session() -> aiohttp.ClientSession:
 
 
 async def render(avatar: Optional[bytes], display_name: str, server_name: str, member_count: int,
-                 background: Optional[bytes], alt_name: str) -> Optional[bytes]:
+                 background: Optional[bytes], alt_name: str, *, banner: bool = False,
+                 theme: str = "black") -> Optional[bytes]:
     """Ask the worker for a welcome image. Returns PNG bytes, or None to fall back to local rendering."""
     global _down_until
     if not is_enabled() or time.monotonic() < _down_until:
@@ -56,6 +57,8 @@ async def render(avatar: Optional[bytes], display_name: str, server_name: str, m
         "server_name": server_name,
         "member_count": member_count,
         "alt_name": alt_name,
+        "banner": banner,          # use the built-in banner (the worker has its own copy)
+        "theme": theme,
     }).encode()
     timestamp = str(int(time.time()))
     headers = {

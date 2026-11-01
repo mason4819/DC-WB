@@ -5,6 +5,7 @@ from discord.ext import commands
 
 import config
 import database
+from utils import image as imaging
 from utils.access import require_authorized
 from utils.messaging import channel_warnings, get_bot_member, role_problem
 
@@ -41,7 +42,7 @@ class SettingsCog(commands.Cog, name="Settings"):
             name="歡迎系統",
             value=(f"{_status(welcome['enabled'])}\n頻道：{_channel_text(welcome['channel_id'])}\n"
                    f"樣式：{'嵌入式訊息' if welcome['use_embed'] else '純文字'}\n"
-                   f"圖片：{'開啟' if welcome['image_enabled'] else '關閉'}\n"
+                   f"圖片：{'開啟' if welcome['image_enabled'] else '關閉'}（{imaging.get_theme(welcome['theme'])['label']}）\n"
                    f"內容：`{_short(welcome['message'])}`"),
             inline=False)
         if welcome["enabled"]:

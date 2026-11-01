@@ -86,6 +86,6 @@ DEFAULT_LEAVE_MESSAGE = "{username} 離開了 {server}，目前共有 {member_co
 MAX_MESSAGE_LENGTH = 1000
 
 # --- Embed colours ---------------------------------------------------------
-WELCOME_COLOR = 0xE53945
+WELCOME_COLOR = 0x8E9297   # neutral grey for system embeds; welcome embeds follow the image theme
 LEAVE_COLOR = 0x6B7280
 WARNING_COLOR = 0xF59E0B

@@ -1,18 +1,17 @@
-"""Welcome image generation with Pillow.
+"""Welcome image generation with Pillow: minimal line style, four black-and-white themes.
 
 Layout (1200x406, the same ratio as the default banner):
-  - Background banner (default banner, custom upload, or a simple gradient).
-  - A dark rounded card on the left holds the avatar, WELCOME, display name,
-    server name and member number. The card stops at x=900 so it never covers
-    the logo in the bottom-right corner of the default banner.
+  - A plain background in the theme colour (or a background image, tinted with the theme colour).
+  - A thin rounded frame, a circular avatar with two thin rings, and one short accent arc.
+  - Text on the left: WELCOME, the display name, a short rule, "welcome to <server>".
+  - A thin vertical line, then the member number drawn as outlined digits on the right.
 
-Names from Discord can contain fancy Unicode, emoji or symbols. Text is
-normalised and every character is drawn with the first font in assets/fonts
-that really has a glyph for it, so no "tofu" boxes appear. Characters that no
-font supports are dropped instead of being drawn as boxes.
+Names from Discord can contain fancy Unicode, emoji or symbols. Text is normalised and every
+character is drawn with the first font in assets/fonts that really has a glyph for it, so no
+"tofu" boxes appear. Characters that no font supports are dropped instead of being drawn as boxes.
 
-Every image object is closed as soon as it is no longer needed and nothing
-is cached, so memory is released right after each render.
+Every image object is closed as soon as it is no longer needed and nothing is cached, so
+memory is released right after each render.
 """
 import asyncio
 import io
@@ -21,7 +20,7 @@ import unicodedata
 from pathlib import Path
 from typing import Optional, Union
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
 
 import config
 
@@ -35,19 +34,40 @@ RENDER_LOCK = asyncio.Semaphore(1)
 
 W, H = config.IMAGE_WIDTH, config.IMAGE_HEIGHT
 
-# --- Layout constants ------------------------------------------------------
-CARD_BOX = (40, 128, 900, 386)
-AVATAR_SIZE = 190
-AVATAR_X, AVATAR_Y = 80, 162
-TEXT_X = 318
-TEXT_MAX_WIDTH = CARD_BOX[2] - 40 - TEXT_X               # 542 px
+# --- Themes: a black-and-white family. bg = background, fg = main text and rings,
+# --- muted = secondary text, line = hairlines, embed = colour of the Discord embed stripe.
+THEMES = {
+    "black":    {"label": "黑色", "bg": (10, 10, 11),    "fg": (245, 245, 244), "muted": (145, 148, 154), "line": (58, 60, 66),    "embed": 0xF5F5F4},
+    "charcoal": {"label": "深灰", "bg": (31, 33, 37),    "fg": (240, 241, 243), "muted": (155, 160, 168), "line": (74, 78, 86),    "embed": 0xF0F1F3},
+    "white":    {"label": "白色", "bg": (247, 247, 245),  "fg": (14, 14, 15),    "muted": (104, 107, 113), "line": (206, 207, 211), "embed": 0x0E0E0F},
+    "silver":   {"label": "淺灰", "bg": (227, 229, 232),  "fg": (22, 24, 28),    "muted": (92, 97, 105),   "line": (176, 180, 186), "embed": 0x16181C},
+}
+DEFAULT_THEME = "black"
+BACKGROUND_TINT = 0.80       # how strongly the theme colour covers a background image
 
-# --- Colours ---------------------------------------------------------------
-RED = (220, 30, 45, 255)
-WHITE = (255, 255, 255, 255)
-SOFT_WHITE = (232, 235, 242, 255)
-SOFT_RED = (255, 118, 126, 255)
-DARK = (14, 16, 22, 255)
+
+def get_theme(name: Optional[str]) -> dict:
+    return THEMES.get(name or "", THEMES[DEFAULT_THEME])
+
+
+def theme_embed_colour(name: Optional[str]) -> int:
+    return get_theme(name)["embed"]
+
+
+# --- Layout constants (pixels at 1x) ----------------------------------------
+FRAME_INSET = 20
+AVATAR_CENTRE = (186, 203)
+AVATAR_RADIUS = 84
+TEXT_X = 336
+TEXT_MAX_WIDTH = 484                    # the vertical line sits at x = 846
+DIVIDER_X = 846
+NUMBER_CENTRE_X = (DIVIDER_X + W - FRAME_INSET) // 2     # middle of the right zone
+NUMBER_MAX_WIDTH = 270
+
+
+class BackgroundError(ValueError):
+    """Raised when an uploaded background cannot be used."""
+
 
 # Font families are tried in this order. Any other font file placed in
 # assets/fonts is tried afterwards (alphabetical), so adding a font is just
@@ -56,10 +76,6 @@ FONT_PRIORITY = ("NotoSansTC", "NotoSansSC", "NotoSansJP", "NotoSansKR",
                  "NotoSansSymbols", "NotoSansSymbols2", "NotoEmoji")
 
 Glyph = tuple[str, ImageFont.FreeTypeFont]
-
-
-class BackgroundError(ValueError):
-    """Raised when an uploaded background cannot be used."""
 
 
 # --- Fonts -----------------------------------------------------------------
@@ -209,40 +225,7 @@ def _circle_mask(diameter: int) -> Image.Image:
     return mask
 
 
-def _paste_disc(canvas: Image.Image, x: int, y: int, diameter: int, colour) -> None:
-    mask = _circle_mask(diameter)
-    canvas.paste(colour, (x, y, x + diameter, y + diameter), mask)
-    mask.close()
-
-
-def _gradient_banner() -> Image.Image:
-    """Simple dark vertical gradient, used when no background image is available."""
-    gradient = Image.linear_gradient("L").resize((W, H))
-    banner = ImageOps.colorize(gradient, black=(24, 28, 48), white=(78, 40, 92))
-    gradient.close()
-    return banner
-
-
-def _load_banner(background: Union[Path, bytes, None]) -> Image.Image:
-    """Load the custom background (file path or raw bytes), else the default banner, else a gradient."""
-    for candidate in (background, config.DEFAULT_BACKGROUND):
-        if candidate is None:
-            continue
-        try:
-            if isinstance(candidate, bytes):
-                source = Image.open(io.BytesIO(candidate))
-            elif Path(candidate).is_file():
-                source = Image.open(candidate)
-            else:
-                continue
-            with source:
-                return ImageOps.fit(source.convert("RGB"), (W, H), RESAMPLE)
-        except (OSError, ValueError):
-            log.warning("Could not read a background image, trying the next one")
-    return _gradient_banner()
-
-
-def _circle_avatar(avatar_bytes: Optional[bytes], diameter: int) -> Image.Image:
+def _circle_avatar(avatar_bytes: Optional[bytes], diameter: int, fallback) -> Image.Image:
     avatar = None
     if avatar_bytes:
         try:
@@ -251,59 +234,124 @@ def _circle_avatar(avatar_bytes: Optional[bytes], diameter: int) -> Image.Image:
         except (OSError, ValueError):
             log.warning("Could not decode avatar image, using a placeholder")
     if avatar is None:
-        avatar = Image.new("RGBA", (diameter, diameter), (88, 101, 242, 255))
+        avatar = Image.new("RGBA", (diameter, diameter), (*fallback, 255))
     mask = _circle_mask(diameter)
     avatar.putalpha(mask)
     mask.close()
     return avatar
 
 
+def _load_background(background: Union[Path, bytes, None], theme: dict) -> Image.Image:
+    """The base layer: a plain theme colour, or a background image covered by the theme colour."""
+    plain = Image.new("RGB", (W, H), theme["bg"])
+    if background is None:
+        return plain
+    try:
+        if isinstance(background, bytes):
+            source = Image.open(io.BytesIO(background))
+        elif Path(background).is_file():
+            source = Image.open(background)
+        else:
+            return plain
+        with source:
+            picture = ImageOps.fit(source.convert("RGB"), (W, H), RESAMPLE)
+        grey = ImageOps.grayscale(picture).convert("RGB")      # keep the whole look black and white
+        picture.close()
+        picture = grey
+        tinted = Image.blend(picture, plain, BACKGROUND_TINT)
+        picture.close()
+        plain.close()
+        return tinted
+    except (OSError, ValueError):
+        log.warning("Could not read a background image, using a plain background")
+        return plain
+
+
+def _line_layer(theme: dict) -> Image.Image:
+    """All the thin line work, drawn at 2x for smooth edges and scaled back down."""
+    k = 2
+    layer = Image.new("RGBA", (W * k, H * k), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    fg, line = (*theme["fg"], 255), (*theme["line"], 255)
+
+    inset = FRAME_INSET * k
+    draw.rounded_rectangle((inset, inset, W * k - inset, H * k - inset), radius=22 * k, outline=line, width=3)
+
+    cx, cy = AVATAR_CENTRE[0] * k, AVATAR_CENTRE[1] * k
+    inner, outer = (AVATAR_RADIUS + 12) * k, (AVATAR_RADIUS + 30) * k
+    draw.ellipse((cx - inner, cy - inner, cx + inner, cy + inner), outline=fg, width=3)
+    draw.ellipse((cx - outer, cy - outer, cx + outer, cy + outer), outline=line, width=2)
+    draw.arc((cx - outer, cy - outer, cx + outer, cy + outer), start=-52, end=38, fill=fg, width=6)
+
+    draw.line((TEXT_X * k, 216 * k, (TEXT_X + 56) * k, 216 * k), fill=fg, width=6)
+    draw.line(((TEXT_X + 66) * k, 216 * k, (DIVIDER_X - 26) * k, 216 * k), fill=line, width=2)
+    draw.line((DIVIDER_X * k, 74 * k, DIVIDER_X * k, (H - 74) * k), fill=line, width=2)
+
+    small = layer.resize((W, H), RESAMPLE)
+    layer.close()
+    return small
+
+
+def _paste_outlined(canvas: Image.Image, text: str, font: ImageFont.FreeTypeFont,
+                    centre: tuple[int, int], colour, stroke: int = 2) -> None:
+    """Draw outlined (hollow) text: the stroked glyph minus the plain glyph."""
+    left, top, right, bottom = font.getbbox(text, anchor="ls", stroke_width=stroke)
+    pad = 4
+    width, height = int(right - left) + pad * 2, int(bottom - top) + pad * 2
+    origin = (pad - left, pad - top)
+    outer = Image.new("L", (width, height), 0)
+    inner = Image.new("L", (width, height), 0)
+    ImageDraw.Draw(outer).text(origin, text, font=font, fill=255, anchor="ls", stroke_width=stroke)
+    ImageDraw.Draw(inner).text(origin, text, font=font, fill=255, anchor="ls")
+    ring = ImageChops.subtract(outer, inner)
+    x, y = centre[0] - width // 2, centre[1] - height // 2
+    canvas.paste(colour, (x, y, x + width, y + height), ring)
+    for image in (outer, inner, ring):
+        image.close()
+
+
 # --- Public API ------------------------------------------------------------
 def build_welcome_image(avatar_bytes: Optional[bytes], display_name: str, server_name: str,
                         member_count: int, background: Union[Path, bytes, None] = None,
-                        alt_name: str = "") -> io.BytesIO:
+                        alt_name: str = "", theme: str = DEFAULT_THEME) -> io.BytesIO:
     """Render the welcome image and return it as an in-memory PNG.
 
     alt_name (the plain username) is used when the display name has no drawable characters.
     """
-    canvas = Image.new("RGBA", (W, H), DARK)
+    colours = get_theme(theme)
+    fg, muted = colours["fg"], colours["muted"]
+    canvas = _load_background(background, colours).convert("RGBA")
     try:
-        # 1. Background banner
-        banner = _load_banner(background)
-        canvas.paste(banner, (0, 0))
-        banner.close()
-
-        # 2. Semi-transparent rounded card
-        overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        ImageDraw.Draw(overlay).rounded_rectangle(
-            CARD_BOX, radius=28, fill=(10, 12, 18, 178), outline=(255, 255, 255, 56), width=2)
-        merged = Image.alpha_composite(canvas, overlay)
-        overlay.close()
+        # 1. Thin line work (frame, rings, rules)
+        lines = _line_layer(colours)
+        merged = Image.alpha_composite(canvas, lines)
+        lines.close()
         canvas.close()
         canvas = merged
 
-        # 3. Avatar with a red ring and a white inner ring
-        _paste_disc(canvas, AVATAR_X - 9, AVATAR_Y - 9, AVATAR_SIZE + 18, RED)
-        _paste_disc(canvas, AVATAR_X - 5, AVATAR_Y - 5, AVATAR_SIZE + 10, WHITE)
-        avatar = _circle_avatar(avatar_bytes, AVATAR_SIZE)
-        canvas.paste(avatar, (AVATAR_X, AVATAR_Y), avatar)
+        # 2. Avatar inside the rings
+        diameter = AVATAR_RADIUS * 2
+        avatar = _circle_avatar(avatar_bytes, diameter, colours["line"])
+        canvas.paste(avatar, (AVATAR_CENTRE[0] - AVATAR_RADIUS, AVATAR_CENTRE[1] - AVATAR_RADIUS), avatar)
         avatar.close()
 
         draw = ImageDraw.Draw(canvas)
 
-        # 4. Text block inside the card
-        _draw_line(draw, TEXT_X, 165, "WELCOME", True, 30, 30, SOFT_RED, spacing=7)
+        # 3. Text block
+        _draw_line(draw, TEXT_X, 118, "WELCOME", True, 20, 20, muted, spacing=9)
 
         name = sanitize_text(display_name)
-        if not _draw_line(draw, TEXT_X, 228, name, True, 58, 30, WHITE):
-            fallback = sanitize_text(alt_name) or "新成員"
-            _draw_line(draw, TEXT_X, 228, fallback, True, 58, 30, WHITE)
-
-        draw.rounded_rectangle((TEXT_X, 270, TEXT_X + 80, 274), radius=2, fill=RED)
+        if not _draw_line(draw, TEXT_X, 176, name, True, 60, 30, fg):
+            _draw_line(draw, TEXT_X, 176, sanitize_text(alt_name) or "新成員", True, 60, 30, fg)
 
         server = sanitize_text(server_name) or "伺服器"
-        _draw_line(draw, TEXT_X, 308, f"歡迎加入 {server}", False, 32, 20, SOFT_WHITE)
-        _draw_line(draw, TEXT_X, 350, f"第 {member_count:,} 位成員", False, 28, 20, SOFT_RED)
+        _draw_line(draw, TEXT_X, 262, f"歡迎加入 {server}", False, 28, 18, fg)
+
+        # 4. Member number: small label and outlined digits on the right
+        _draw_line(draw, NUMBER_CENTRE_X - 38, 150, "MEMBER", True, 16, 16, muted, spacing=7)
+        digits = f"{member_count:,}"
+        number_font = _fit_text(True, digits, 112, NUMBER_MAX_WIDTH, 36)[0].primary
+        _paste_outlined(canvas, digits, number_font, (NUMBER_CENTRE_X, 222), muted, stroke=2)
 
         # 5. Encode, then release the canvas immediately
         rgb = canvas.convert("RGB")
