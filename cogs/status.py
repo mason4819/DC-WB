@@ -33,7 +33,7 @@ WATCHING = discord.ActivityType.watching
 LISTENING = discord.ActivityType.listening
 
 SOLO = [
-    (WATCHING,  "目前版本：v1.0.0 (正式版)"),
+    (WATCHING,  "目前版本：v2.0.0"),
     (WATCHING,  "{duty} 一個人顧 {servers} 個伺服器，怎樣"),
     (PLAYING,   "{members} 個人還不夠我忙嗎"),
     (WATCHING,  "{duty}：有事自己排隊"),
@@ -52,7 +52,7 @@ SOLO = [
 ]
 
 BACKUP_UP = [
-    (WATCHING,  "目前版本：v1.0.0 (正式版)"),
+    (WATCHING,  "目前版本：v2.0.0"),
     (WATCHING,  "{duty} 正在上班，{backup} 正在看戲"),
     (PLAYING,   "{backup} 在線，出事終於有人陪葬"),
     (WATCHING,  "{duty} 主班，{backup} 負責裝忙"),
@@ -68,7 +68,7 @@ BACKUP_UP = [
 ]
 
 OFFLOAD = [
-    (WATCHING,  "目前版本：v1.0.0 (正式版)"),
+    (WATCHING,  "目前版本：v2.0.0"),
     (PLAYING,   "{backup} 又被抓去畫圖了"),
     (WATCHING,  "{duty} 把工作丟給 {backup}，漂亮"),
     (PLAYING,   "{backup}：不是說好只是待命嗎"),
@@ -84,7 +84,7 @@ OFFLOAD = [
 ]
 
 BACKUP_DOWN = [
-    (WATCHING,  "目前版本：v1.0.0 (正式版)"),
+    (WATCHING,  "目前版本：v2.0.0"),
     (WATCHING,  "{duty} 又要一個人上班了"),
     (PLAYING,   "{backup} 人呢？人呢？"),
     (WATCHING,  "{duty} 已經習慣沒有 {backup} 了"),
@@ -100,6 +100,7 @@ BACKUP_DOWN = [
     (WATCHING,  "{duty} 一個人扛，{backup} 一個人消失"),
     (PLAYING,   "備援已失蹤，請勿報警，還在找"),
 ]
+
 
 class StatusCog(commands.Cog, name="Status"):
     def __init__(self, bot: commands.Bot) -> None:

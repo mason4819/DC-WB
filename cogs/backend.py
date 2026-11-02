@@ -9,6 +9,7 @@
 Only the bot owner can use it: the IDs in OWNER_IDS, or the application owner if that is
 empty. Everything is answered privately (ephemeral). Panels stay in memory for 5 minutes.
 """
+import asyncio
 import logging
 import time
 from typing import Callable, Optional
@@ -20,7 +21,8 @@ from discord.ext import commands
 import config
 import database
 import ha
-from utils import remote
+from utils import assets_store, remote
+from utils import image as imaging
 from utils.access import NotBotOwner
 
 log = logging.getLogger(__name__)
@@ -76,8 +78,8 @@ async def leave_guild(bot: commands.Bot, guild_id: int, mode: str) -> str:
     log.warning("Left guild %s (%s) from the back office, mode=%s", name, guild_id, mode)
     try:
         if mode in ("wipe", "block"):
-            await database.delete_guild_data(guild_id)
-            (config.CUSTOM_BACKGROUND_DIR / f"{guild_id}.jpg").unlink(missing_ok=True)
+            await database.delete_guild_data(guild_id)          # includes the stored background
+            assets_store.drop_background_cache(guild_id)
             notes.append("已清除這個伺服器的設定與自訂背景。")
         if mode == "block":
             result = await database.add_blocked(guild_id, name)
@@ -404,6 +406,45 @@ class BackendCog(commands.Cog, name="Backend"):
         await interaction.response.send_message(
             f"這台主機（{config.NODE_NAME}）會中斷 Discord 連線約 {minutes} 分鐘，讓另一台接手。"
             "交接期間可能有一小段時間沒有機器人在線。確定嗎？", view=view, ephemeral=True)
+
+    @backend.command(name="載入圖片", description="查看或更換「正在產生歡迎圖片」旁邊的透明 GIF")
+    @app_commands.describe(image="新的圖片（PNG、JPG、WebP 或 GIF，15MB 以內；不填則顯示目前的）",
+                           transparent="把深色背景變成透明（預設是）",
+                           rotate="靜態圖片加上緩慢旋轉，看起來像載入中（預設否）",
+                           reset="還原成內建的預設圖")
+    @app_commands.rename(image="圖片", transparent="透明背景", rotate="旋轉動畫", reset="還原預設")
+    async def loading_image(self, interaction: discord.Interaction, image: Optional[discord.Attachment] = None,
+                            transparent: bool = True, rotate: bool = False, reset: Optional[bool] = None) -> None:
+        await interaction.response.defer(ephemeral=True)
+        try:
+            if reset:
+                await database.delete_asset("loading")
+                text = "✅ 已還原成內建的預設圖。"
+            elif image is not None:
+                if image.size > config.MAX_BACKGROUND_BYTES:
+                    await interaction.followup.send(f"❌ 圖片超過 {config.MAX_BACKGROUND_BYTES // 1024 // 1024}MB。", ephemeral=True)
+                    return
+                data = await image.read()
+                async with imaging.RENDER_LOCK:
+                    gif = await asyncio.to_thread(imaging.process_loading, data, transparent=transparent, rotate=rotate)
+                del data
+                await database.set_asset("loading", gif)
+                text = f"✅ 已更新（{len(gif) // 1024} KB，存在資料庫，重啟或換主機都不會消失）。"
+            else:
+                custom = await database.get_asset("loading")
+                text = "目前使用：" + (f"**自訂圖片**（{len(custom) // 1024} KB）" if custom else "**內建預設圖**")
+        except imaging.BackgroundError as exc:
+            await interaction.followup.send(f"❌ {exc}", ephemeral=True)
+            return
+        except discord.HTTPException:
+            await interaction.followup.send("❌ 無法下載附件，請稍後再試。", ephemeral=True)
+            return
+        except database.DatabaseError:
+            await interaction.followup.send("❌ 資料庫目前無法使用，請稍後再試。", ephemeral=True)
+            return
+        preview = await assets_store.loading_file()
+        await interaction.followup.send(text + "\n（下面是預覽，背景是透明的）", file=preview, ephemeral=True) if preview \
+            else await interaction.followup.send(text, ephemeral=True)
 
     @backend.command(name="同步指令", description="重新向 Discord 登錄斜線指令")
     async def sync_commands(self, interaction: discord.Interaction) -> None:

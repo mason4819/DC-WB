@@ -11,7 +11,7 @@ from discord.ext import commands
 import config
 import database
 from utils import image as imaging
-from utils import remote
+from utils import assets_store, remote
 import busywork
 from utils.formatter import VARIABLES_DESCRIPTION, VARIABLES_HELP, clean_template, render_message
 from utils.messaging import (STYLE_CHOICES, AdminGroup, build_message_kwargs, channel_warnings,
@@ -69,7 +69,12 @@ class WelcomeCog(commands.Cog, name="Welcome"):
             background, banner = None, False
             if settings["background_path"] == "builtin":          # the banner that ships with the bot
                 background, banner = config.DEFAULT_BACKGROUND, True
-            elif settings["background_path"]:                      # an image uploaded by the admins
+            elif (settings["background_path"] or "").startswith("db:"):   # uploaded by the admins, kept in the database
+                try:
+                    background = await assets_store.background_file(member.guild.id, int(settings["background_path"][3:]))
+                except (ValueError, database.DatabaseError):
+                    log.warning("Could not load the stored background of guild %s", member.guild.id)
+            elif settings["background_path"]:                      # old layout: a file on this host's disk
                 candidate = config.DATA_DIR / settings["background_path"]
                 background = candidate if candidate.is_file() else None
             theme = settings["theme"]
@@ -173,7 +178,7 @@ class WelcomeCog(commands.Cog, name="Welcome"):
     @welcome.command(name="圖片", description="設定歡迎圖片的主題與背景（不填任何選項則顯示目前設定）")
     @app_commands.describe(enabled="開啟或關閉歡迎圖片", theme="黑白色系：黑色、深灰、白色、淺灰",
                            background_style="純色線條，或套用預設橫幅（會轉成黑白）",
-                           background="自訂背景圖（PNG 或 JPG，5MB 以內，會轉成黑白）",
+                           background="自訂背景圖（PNG 或 JPG，15MB 以內，會轉成黑白）",
                            reset="還原成預設（黑色、純色）")
     @app_commands.rename(enabled="啟用", theme="主題", background_style="背景樣式", background="背景",
                          reset="還原預設")
@@ -196,21 +201,19 @@ class WelcomeCog(commands.Cog, name="Welcome"):
 
         await interaction.response.defer(ephemeral=True)
         fields: dict = {}
-        destination = config.CUSTOM_BACKGROUND_DIR / f"{guild_id}.jpg"
 
-        def drop_custom_file() -> None:
-            try:
-                destination.unlink(missing_ok=True)
-            except OSError:
-                log.warning("Could not delete %s", destination)
+        async def drop_stored_background() -> None:
+            """Remove the uploaded background from the database and from this host's cache."""
+            await database.delete_background(guild_id)
+            assets_store.drop_background_cache(guild_id)
 
         if reset:
             fields.update(background_path=None, theme=imaging.DEFAULT_THEME)
-            drop_custom_file()
+            await drop_stored_background()
 
         if background_style is not None:
             fields["background_path"] = "builtin" if background_style.value == "banner" else None
-            drop_custom_file()
+            await drop_stored_background()
 
         if background is not None:
             content_type = (background.content_type or "").lower()
@@ -220,19 +223,24 @@ class WelcomeCog(commands.Cog, name="Welcome"):
                 await reply(interaction, "❌ 請上傳 PNG 或 JPG 圖片。")
                 return
             if background.size > config.MAX_BACKGROUND_BYTES:
-                await reply(interaction, "❌ 圖片超過 5MB。")
+                await reply(interaction, f"❌ 圖片超過 {config.MAX_BACKGROUND_BYTES // 1024 // 1024}MB。")
                 return
             try:
                 data = await background.read()
                 async with imaging.RENDER_LOCK:
-                    await asyncio.to_thread(imaging.save_custom_background, data, destination)
+                    processed = await asyncio.to_thread(imaging.process_background, data)
+                del data
+                version = await database.save_background(guild_id, processed)   # kept in the database
+                assets_store.cache_background(guild_id, version, processed)
             except imaging.BackgroundError as exc:
                 await reply(interaction, f"❌ {exc}")
                 return
             except discord.HTTPException:
                 await reply(interaction, "❌ 無法下載附件，請稍後再試。")
                 return
-            fields["background_path"] = f"backgrounds/{guild_id}.jpg"
+            except OSError:
+                log.warning("Could not cache the new background for guild %s", guild_id, exc_info=True)
+            fields["background_path"] = f"db:{version}"
 
         if theme is not None:
             fields["theme"] = theme.value

@@ -13,8 +13,10 @@ Design notes for a 512 MB / 0.1 CPU host:
 - Local SQLite connections are short-lived and closed immediately.
 """
 import asyncio
+import base64
 import logging
 import sqlite3
+import time
 from contextlib import contextmanager
 from typing import Any, Iterator, Optional
 
@@ -68,6 +70,16 @@ SCHEMA_STATEMENTS = [
         guild_id   INTEGER PRIMARY KEY,
         name       TEXT NOT NULL,
         blocked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )""",
+    """CREATE TABLE IF NOT EXISTS custom_backgrounds (
+        guild_id   INTEGER PRIMARY KEY,
+        data       BLOB    NOT NULL,
+        updated_at INTEGER NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS app_assets (
+        name       TEXT PRIMARY KEY,
+        data       BLOB    NOT NULL,
+        updated_at INTEGER NOT NULL
     )""",
     """CREATE TABLE IF NOT EXISTS autorole_settings (
         guild_id INTEGER PRIMARY KEY REFERENCES guild_settings(guild_id) ON DELETE CASCADE,
@@ -127,6 +139,8 @@ def _encode(value: Any) -> dict:
         return {"type": "null"}
     if isinstance(value, (bool, int)):
         return {"type": "integer", "value": str(int(value))}
+    if isinstance(value, (bytes, bytearray)):
+        return {"type": "blob", "base64": base64.b64encode(bytes(value)).decode().rstrip("=")}
     return {"type": "text", "value": str(value)}
 
 
@@ -139,6 +153,9 @@ def _decode(cell: dict) -> Any:
         return int(cell["value"])
     if kind == "float":
         return float(cell["value"])
+    if kind == "blob":
+        encoded = cell["base64"]
+        return base64.b64decode(encoded + "=" * (-len(encoded) % 4))   # padding may be missing
     return cell.get("value")
 
 
@@ -397,7 +414,8 @@ async def peek_settings(kind: str, guild_id: int) -> Optional[dict[str, Any]]:
 
 async def delete_guild_data(guild_id: int) -> None:
     """Remove everything stored for a server (settings, management list)."""
-    tables = ("access_list", "welcome_settings", "leave_settings", "autorole_settings", "guild_settings")
+    tables = ("access_list", "welcome_settings", "leave_settings", "autorole_settings", "custom_backgrounds",
+              "guild_settings")
     await _backend.run([(f"DELETE FROM {table} WHERE guild_id = ?", (guild_id,)) for table in tables])
     for key in [key for key in _cache if key[1] == guild_id]:
         _cache.pop(key, None)
@@ -441,3 +459,44 @@ async def get_lease() -> Optional[dict[str, Any]]:
         f"SELECT holder, expires_at - {_DB_NOW} AS seconds_left FROM node_lease WHERE name = ?",
         (LEASE_NAME,))]))[0]
     return rows[0] if rows else None
+
+
+# ------------------------------------------------------------- stored images
+# Images live in the database, so they survive restarts, redeploys and a switch to the other host.
+async def save_background(guild_id: int, data: bytes) -> int:
+    """Store a server's (already resized) background. Returns a version number for cache file names."""
+    version = time.time_ns() // 1_000_000
+    await _backend.run([("INSERT OR REPLACE INTO custom_backgrounds (guild_id, data, updated_at) VALUES (?, ?, ?)",
+                         (guild_id, data, version))])
+    return version
+
+
+async def load_background(guild_id: int) -> Optional[bytes]:
+    rows = (await _backend.run([("SELECT data FROM custom_backgrounds WHERE guild_id = ?", (guild_id,))]))[0]
+    return rows[0]["data"] if rows else None
+
+
+async def delete_background(guild_id: int) -> None:
+    await _backend.run([("DELETE FROM custom_backgrounds WHERE guild_id = ?", (guild_id,))])
+
+
+async def get_asset(name: str) -> Optional[bytes]:
+    """A bot-wide image such as the loading thumbnail. Cached in memory (a few hundred KB at most)."""
+    key = (f"asset:{name}", 0)
+    cached = _cache.get(key)
+    if cached is None:
+        rows = (await _backend.run([("SELECT data FROM app_assets WHERE name = ?", (name,))]))[0]
+        cached = {"data": rows[0]["data"] if rows else None}
+        _cache[key] = cached
+    return cached["data"]
+
+
+async def set_asset(name: str, data: bytes) -> None:
+    await _backend.run([("INSERT OR REPLACE INTO app_assets (name, data, updated_at) VALUES (?, ?, ?)",
+                         (name, data, time.time_ns() // 1_000_000))])
+    _cache[(f"asset:{name}", 0)] = {"data": data}
+
+
+async def delete_asset(name: str) -> None:
+    await _backend.run([("DELETE FROM app_assets WHERE name = ?", (name,))])
+    _cache[(f"asset:{name}", 0)] = {"data": None}

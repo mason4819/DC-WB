@@ -77,8 +77,16 @@ DEFAULT_BACKGROUND = ASSETS_DIR / "backgrounds" / "default.png"
 # --- Welcome image ---------------------------------------------------------
 IMAGE_WIDTH = 1200
 IMAGE_HEIGHT = 406                                      # same ratio as the default banner (500x169)
-MAX_BACKGROUND_BYTES = 5 * 1024 * 1024                  # 5 MB upload limit
-MAX_BACKGROUND_PIXELS = 12_000_000                      # protects RAM when decoding uploads
+MAX_BACKGROUND_BYTES = 15 * 1024 * 1024                 # upload limit for any image: 15 MB
+MAX_BACKGROUND_PIXELS = 16_000_000                      # PNG: it is decoded fully, so this protects RAM
+MAX_JPEG_PIXELS = 80_000_000                            # JPEG is decoded at reduced size (draft mode)
+MAX_STORED_BACKGROUND_BYTES = 600 * 1024                # what is kept in the database after resizing
+
+# The "generating..." thumbnail shown next to the placeholder embed (a transparent GIF).
+LOADING_IMAGE = ASSETS_DIR / "loading.gif"
+LOADING_SIZE = 240                                      # pixels; it is shown small
+LOADING_MAX_FRAMES = 40
+LOADING_MAX_BYTES = 2 * 1024 * 1024                     # what is kept in the database
 
 # --- Message defaults and limits -------------------------------------------
 DEFAULT_WELCOME_MESSAGE = "歡迎 {user} 加入 {server}！你是第 {member_count} 位成員。"

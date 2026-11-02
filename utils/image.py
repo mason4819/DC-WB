@@ -364,30 +364,134 @@ def build_welcome_image(avatar_bytes: Optional[bytes], display_name: str, server
         canvas.close()
 
 
-def save_custom_background(data: bytes, destination: Path) -> None:
-    """Validate an uploaded PNG/JPG, pre-fit it to the image size and store it as JPEG.
+def process_background(data: bytes) -> bytes:
+    """Validate an uploaded PNG/JPG, fit it to the image size and return it as a small JPEG.
 
-    Storing the already-cropped result keeps files small and rendering fast.
+    Only this small result is stored (in the database), never the original upload.
     """
     try:
         with Image.open(io.BytesIO(data)) as source:
             if source.format not in {"PNG", "JPEG"}:
                 raise BackgroundError("只支援 PNG 或 JPG 圖片。")
-            if source.width * source.height > config.MAX_BACKGROUND_PIXELS:
-                raise BackgroundError("這張圖片的像素太多，請使用約 1200 萬像素以下的圖片。")
-            source.draft("RGB", (W * 2, H * 2))  # faster, lower-memory JPEG decode
-            fitted = ImageOps.fit(source.convert("RGB"), (W, H), RESAMPLE)
+            limit = config.MAX_JPEG_PIXELS if source.format == "JPEG" else config.MAX_BACKGROUND_PIXELS
+            if source.width * source.height > limit:
+                raise BackgroundError(f"這張圖片的像素太多（上限約 {limit // 1_000_000} 百萬像素），請縮小後再上傳。")
+            source.draft("RGB", (W, H))  # JPEG: decode at a reduced size that is still big enough
+            rgb = source if source.mode == "RGB" else source.convert("RGB")   # no extra copy when already RGB
+            fitted = ImageOps.fit(rgb, (W, H), RESAMPLE)
+            if rgb is not source:
+                rgb.close()
     except BackgroundError:
         raise
     except (OSError, ValueError, Image.DecompressionBombError) as exc:
         raise BackgroundError("無法讀取這個檔案，請確認它是 PNG 或 JPG 圖片。") from exc
 
     try:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = destination.with_name(destination.name + ".tmp")
-        fitted.save(temp_path, format="JPEG", quality=90, optimize=True)
-        temp_path.replace(destination)
-    except OSError as exc:
-        raise BackgroundError("無法把背景圖儲存到磁碟。") from exc
+        result = b""
+        for quality in (90, 80, 70, 60):
+            buffer = io.BytesIO()
+            fitted.save(buffer, format="JPEG", quality=quality, optimize=True)
+            result = buffer.getvalue()
+            if len(result) <= config.MAX_STORED_BACKGROUND_BYTES:
+                break
+        return result
     finally:
         fitted.close()
+
+
+# --- Loading thumbnail (transparent GIF) -------------------------------------
+ALPHA_CUTOFF = 64          # GIF only knows "transparent" or "opaque"; soft edges are cut here
+KEY_CUTOFF = 28            # brightness below this counts as background when keying out black
+ROTATE_FRAMES = 24
+FRAME_MS = 80
+
+
+def _key_out_black(frame: Image.Image) -> Image.Image:
+    """Opaque image on a dark background -> same image with the dark background transparent.
+
+    Opacity follows brightness (the brightest channel), so soft glows fade out smoothly.
+    """
+    rgba = frame.convert("RGBA")
+    red, green, blue, alpha = rgba.split()
+    brightness = ImageChops.lighter(ImageChops.lighter(red, green), blue)
+    brightness = brightness.point(lambda v: 0 if v < KEY_CUTOFF else min(255, int(v * 1.35)))
+    bright_rgb = Image.merge("RGB", [band.point(lambda v: min(255, int(v * 1.8))) for band in (red, green, blue)])
+    bright_rgb.putalpha(ImageChops.darker(alpha, brightness))
+    for image in (red, green, blue, alpha, brightness, rgba):
+        image.close()
+    return bright_rgb
+
+
+def _gif_frames(frames: list[Image.Image], size: int, durations: list[int]) -> bytes:
+    """RGBA frames -> one GIF with a transparent background (shared palette, no dithering)."""
+    flat = []
+    for frame in frames:
+        small = ImageOps.contain(frame, (size, size), RESAMPLE)
+        flat.append(small)
+    # One palette for every frame, taken from a mosaic of all of them (so later frames keep their colours).
+    cols = max(1, int(len(flat) ** 0.5 + 0.999))
+    tile = min(size, max(48, 480 // cols))
+    mosaic = Image.new("RGB", (tile * cols, tile * (-(-len(flat) // cols))))
+    for number, small in enumerate(flat):
+        mosaic.paste(small.convert("RGB").resize((tile, tile), RESAMPLE), ((number % cols) * tile, (number // cols) * tile))
+    palette_source = mosaic.quantize(colors=255, method=Image.Quantize.MEDIANCUT)
+    mosaic.close()
+    indexed = []
+    for small in flat:
+        frame_p = small.convert("RGB").quantize(palette=palette_source, dither=Image.Dither.NONE)
+        hole = small.getchannel("A").point(lambda v: 255 if v < ALPHA_CUTOFF else 0)
+        frame_p.paste(255, mask=hole)          # palette index 255 = transparent
+        indexed.append(frame_p)
+        hole.close()
+    buffer = io.BytesIO()
+    indexed[0].save(buffer, format="GIF", save_all=True, append_images=indexed[1:], duration=durations,
+                    loop=0, transparency=255, disposal=2, optimize=False)
+    for image in flat + indexed + [palette_source]:
+        image.close()
+    return buffer.getvalue()
+
+
+def process_loading(data: bytes, *, transparent: bool = True, rotate: bool = False) -> bytes:
+    """Turn an uploaded picture (PNG, JPG, WebP or GIF, still or animated) into a small GIF.
+
+    transparent: make a dark background see-through (images that already have transparency keep it).
+    rotate: for a single picture, add a slow full rotation so it looks like "loading".
+    """
+    try:
+        with Image.open(io.BytesIO(data)) as source:
+            if source.format not in {"PNG", "JPEG", "WEBP", "GIF"}:
+                raise BackgroundError("只支援 PNG、JPG、WebP 或 GIF 圖片。")
+            if source.width * source.height > config.MAX_BACKGROUND_PIXELS:
+                raise BackgroundError("這張圖片的像素太多，請縮小後再上傳。")
+            total = getattr(source, "n_frames", 1)
+            step = max(1, -(-total // config.LOADING_MAX_FRAMES))        # keep at most 40 frames
+            frames, durations = [], []
+            for index in range(0, total, step):
+                source.seek(index)
+                raw = source.convert("RGBA")
+                has_alpha = raw.getchannel("A").getextrema()[0] < 255
+                frames.append(_key_out_black(raw) if transparent and not has_alpha else raw)
+                durations.append(int(source.info.get("duration") or FRAME_MS) * step)
+                if frames[-1] is not raw:
+                    raw.close()
+    except BackgroundError:
+        raise
+    except (OSError, ValueError, EOFError, Image.DecompressionBombError) as exc:
+        raise BackgroundError("無法讀取這個檔案，請確認它是 PNG、JPG、WebP 或 GIF 圖片。") from exc
+
+    try:
+        if len(frames) == 1 and rotate:
+            base = frames[0]
+            turned = []
+            for n in range(ROTATE_FRAMES):
+                turned.append(base.rotate(-360 * n / ROTATE_FRAMES, resample=Image.Resampling.BICUBIC))
+            frames, durations = turned, [FRAME_MS] * ROTATE_FRAMES
+            base.close()
+        for size in (config.LOADING_SIZE, 200, 160, 128):                  # shrink until it is small enough
+            result = _gif_frames(frames, size, durations)
+            if len(result) <= config.LOADING_MAX_BYTES:
+                return result
+        raise BackgroundError("這張動畫太大，請換一張較小或較短的。")
+    finally:
+        for frame in frames:
+            frame.close()

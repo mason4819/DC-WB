@@ -6,6 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from utils import assets_store
 from utils.access import NotOwnerOrAdmin, is_owner_or_admin, require_authorized
 
 log = logging.getLogger(__name__)
@@ -140,25 +141,58 @@ async def deliver(*, bot: commands.Bot, guild: discord.Guild, channel_id: Option
         use_embed = False
         notes.append(f"機器人在 {channel.mention} 缺少「嵌入連結」權限，已改用純文字發送。")
 
+    placeholder: Optional[discord.Message] = None
     file: Optional[discord.File] = None
-    if make_image is not None:
-        if not perms.attach_files:
-            notes.append(f"機器人在 {channel.mention} 缺少「附加檔案」權限，已略過歡迎圖片。")
-        else:
-            file = await make_image()
-            if file is None:
-                notes.append("歡迎圖片產生失敗，已略過圖片。")
-
-    kwargs = build_message_kwargs(user, text, use_embed, colour, file)
-    kwargs["allowed_mentions"] = (discord.AllowedMentions(users=[user], roles=False, everyone=False)
-                                  if ping_user else discord.AllowedMentions.none())
     try:
-        await channel.send(**kwargs)
-    except discord.Forbidden:
-        return False, [f"Discord 拒絕機器人在 {channel.mention} 發言，請檢查頻道權限。"]
-    except discord.NotFound:
-        return False, ["設定的頻道已被刪除，請用「頻道」指令重新選擇。"]
-    except discord.HTTPException as exc:
-        log.warning("Discord API error while posting in guild %s: %s", guild.id, exc)
-        return False, [f"Discord 回傳錯誤（{exc.status}），請稍後再試。"]
-    return True, notes
+        if make_image is not None:
+            if not perms.attach_files:
+                notes.append(f"機器人在 {channel.mention} 缺少「附加檔案」權限，已略過歡迎圖片。")
+            else:
+                if perms.embed_links:       # show "generating..." while the image is being drawn
+                    placeholder = await _send_loading(channel, user)
+                file = await make_image()
+                if file is None:
+                    notes.append("歡迎圖片產生失敗，已略過圖片。")
+
+        kwargs = build_message_kwargs(user, text, use_embed, colour, file)
+        kwargs["allowed_mentions"] = (discord.AllowedMentions(users=[user], roles=False, everyone=False)
+                                      if ping_user else discord.AllowedMentions.none())
+        try:
+            await channel.send(**kwargs)
+        except discord.Forbidden:
+            return False, [f"Discord 拒絕機器人在 {channel.mention} 發言，請檢查頻道權限。"]
+        except discord.NotFound:
+            return False, ["設定的頻道已被刪除，請用「頻道」指令重新選擇。"]
+        except discord.HTTPException as exc:
+            log.warning("Discord API error while posting in guild %s: %s", guild.id, exc)
+            return False, [f"Discord 回傳錯誤（{exc.status}），請稍後再試。"]
+        return True, notes
+    finally:
+        if placeholder is not None:          # whatever happened above, never leave it behind
+            await _delete_quietly(placeholder)
+
+
+# Same colour as Discord's dark embed background, so the usual coloured stripe is invisible.
+LOADING_EMBED_COLOUR = 0x2B2D31
+
+
+async def _send_loading(channel: discord.TextChannel, user: discord.abc.User) -> Optional[discord.Message]:
+    """The "generating..." message: a borderless embed with the transparent GIF beside the text."""
+    try:
+        file = await assets_store.loading_file()
+        name = discord.utils.escape_markdown(discord.utils.escape_mentions(user.display_name))
+        embed = discord.Embed(description=f"**正在產生歡迎圖片…**\n為 {name} 準備中，請稍等一下", colour=LOADING_EMBED_COLOUR)
+        if file is not None:
+            embed.set_thumbnail(url=f"attachment://{file.filename}")
+            return await channel.send(embed=embed, file=file, allowed_mentions=discord.AllowedMentions.none())
+        return await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+    except (discord.HTTPException, OSError):
+        log.warning("Could not post the generating message in channel %s", channel.id, exc_info=True)
+        return None
+
+
+async def _delete_quietly(message: discord.Message) -> None:
+    try:
+        await message.delete()
+    except discord.HTTPException:
+        log.info("Could not delete the generating message %s", message.id)
