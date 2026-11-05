@@ -27,6 +27,9 @@ from utils.access import NotBotOwner
 
 log = logging.getLogger(__name__)
 
+MOTION_CHOICES = [app_commands.Choice(name="各自飄動", value="drift"),
+                 app_commands.Choice(name="整體旋轉", value="rotate"),
+                 app_commands.Choice(name="靜態", value="none")]
 PAGE_SIZE = 25          # one Discord select menu holds at most 25 options
 PANEL_TIMEOUT = 300
 
@@ -410,11 +413,13 @@ class BackendCog(commands.Cog, name="Backend"):
     @backend.command(name="載入圖片", description="查看或更換「正在產生歡迎圖片」旁邊的透明 GIF")
     @app_commands.describe(image="新的圖片（PNG、JPG、WebP 或 GIF，15MB 以內；不填則顯示目前的）",
                            transparent="把深色背景變成透明（預設是）",
-                           rotate="靜態圖片加上緩慢旋轉，看起來像載入中（預設否）",
+                           motion="單張圖片的動畫：各自飄動（預設）、整體旋轉、靜態",
                            reset="還原成內建的預設圖")
-    @app_commands.rename(image="圖片", transparent="透明背景", rotate="旋轉動畫", reset="還原預設")
+    @app_commands.rename(image="圖片", transparent="透明背景", motion="動畫", reset="還原預設")
+    @app_commands.choices(motion=MOTION_CHOICES)
     async def loading_image(self, interaction: discord.Interaction, image: Optional[discord.Attachment] = None,
-                            transparent: bool = True, rotate: bool = False, reset: Optional[bool] = None) -> None:
+                            transparent: bool = True, motion: Optional[app_commands.Choice[str]] = None,
+                            reset: Optional[bool] = None) -> None:
         await interaction.response.defer(ephemeral=True)
         try:
             if reset:
@@ -426,7 +431,8 @@ class BackendCog(commands.Cog, name="Backend"):
                     return
                 data = await image.read()
                 async with imaging.RENDER_LOCK:
-                    gif = await asyncio.to_thread(imaging.process_loading, data, transparent=transparent, rotate=rotate)
+                    gif = await asyncio.to_thread(imaging.process_loading, data, transparent=transparent,
+                                                  motion=motion.value if motion else "drift")
                 del data
                 await database.set_asset("loading", gif)
                 text = f"✅ 已更新（{len(gif) // 1024} KB，存在資料庫，重啟或換主機都不會消失）。"

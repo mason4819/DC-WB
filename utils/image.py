@@ -16,11 +16,13 @@ memory is released right after each render.
 import asyncio
 import io
 import logging
+import math
+import random
 import unicodedata
 from pathlib import Path
-from typing import Optional, Union
+from typing import Iterator, Optional, Union
 
-from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 import config
 
@@ -43,7 +45,7 @@ THEMES = {
     "silver":   {"label": "淺灰", "bg": (227, 229, 232),  "fg": (22, 24, 28),    "muted": (92, 97, 105),   "line": (176, 180, 186), "embed": 0x16181C},
 }
 DEFAULT_THEME = "black"
-BACKGROUND_TINT = 0.80       # how strongly the theme colour covers a background image
+BACKGROUND_TINT = 0.70       # how strongly the theme colour covers a background image
 
 
 def get_theme(name: Optional[str]) -> dict:
@@ -402,8 +404,14 @@ def process_background(data: bytes) -> bytes:
 # --- Loading thumbnail (transparent GIF) -------------------------------------
 ALPHA_CUTOFF = 64          # GIF only knows "transparent" or "opaque"; soft edges are cut here
 KEY_CUTOFF = 28            # brightness below this counts as background when keying out black
-ROTATE_FRAMES = 24
 FRAME_MS = 80
+ROTATE_FRAMES = 24
+MOTIONS = ("drift", "rotate", "none")
+DRIFT_FRAMES = 36          # 36 frames x 100 ms = a slow 3.6 second loop
+DRIFT_MS = 100
+DRIFT_WORK_SIZE = 600      # a single picture is animated at this size at most
+DRIFT_AMPLITUDE = (6, 16)  # how far a star wanders (pixels at that size)
+DRIFT_MAX_BLOBS = 800
 
 
 def _key_out_black(frame: Image.Image) -> Image.Image:
@@ -422,12 +430,91 @@ def _key_out_black(frame: Image.Image) -> Image.Image:
     return bright_rgb
 
 
-def _gif_frames(frames: list[Image.Image], size: int, durations: list[int]) -> bytes:
-    """RGBA frames -> one GIF with a transparent background (shared palette, no dithering)."""
-    flat = []
-    for frame in frames:
-        small = ImageOps.contain(frame, (size, size), RESAMPLE)
-        flat.append(small)
+# ---- drifting stars: every separate blob of pixels moves on its own small loop ----
+def _find_blobs(base: Image.Image) -> list[list[tuple[int, int]]]:
+    """Group the visible pixels into separate blobs (touching pixels, plus a 2 px margin)."""
+    width, height = base.size
+    grown = base.getchannel("A").point(lambda v: 255 if v > 8 else 0).filter(ImageFilter.MaxFilter(5))
+    pixels = grown.load()
+    seen = bytearray(width * height)
+    blobs: list[list[tuple[int, int]]] = []
+    for y in range(height):
+        for x in range(width):
+            if pixels[x, y] and not seen[y * width + x]:
+                seen[y * width + x] = 1
+                stack, points = [(x, y)], []
+                while stack:
+                    cx, cy = stack.pop()
+                    points.append((cx, cy))
+                    for ny in (cy - 1, cy, cy + 1):
+                        if 0 <= ny < height:
+                            for nx in (cx - 1, cx, cx + 1):
+                                if 0 <= nx < width and pixels[nx, ny] and not seen[ny * width + nx]:
+                                    seen[ny * width + nx] = 1
+                                    stack.append((nx, ny))
+                blobs.append(points)
+    grown.close()
+    return blobs
+
+
+def _make_sprites(base: Image.Image) -> list[tuple]:
+    """Cut every blob out as its own small image and give it a private, closed, slow path."""
+    rng = random.Random(7)                       # fixed seed: the same picture always animates the same way
+    width, height = base.size
+    blobs = _find_blobs(base)
+    if len(blobs) > DRIFT_MAX_BLOBS:
+        blobs = []                               # too many pieces (a photo, not stars): keep it still
+    sprites = []
+    for points in blobs:
+        xs, ys = [p[0] for p in points], [p[1] for p in points]
+        left, top, right, bottom = min(xs), min(ys), max(xs) + 1, max(ys) + 1
+        mask = Image.new("L", (right - left, bottom - top), 0)
+        mask_pixels = mask.load()
+        for x, y in points:
+            mask_pixels[x - left, y - top] = 255
+        sprite = base.crop((left, top, right, bottom))
+        sprite.putalpha(ImageChops.darker(sprite.getchannel("A"), mask))
+        mask.close()
+        still = (right - left) * (bottom - top) > width * height * 0.25    # a big shape (logo) stays put
+        sprites.append((sprite, left, top,
+                        0 if still else rng.uniform(*DRIFT_AMPLITUDE), 0 if still else rng.uniform(*DRIFT_AMPLITUDE),
+                        rng.choice((1, 1, 2)), rng.choice((1, 1, 2)),
+                        rng.uniform(0, 2 * math.pi), rng.uniform(0, 2 * math.pi)))
+    return sprites
+
+
+def _blit(canvas: Image.Image, sprite: Image.Image, x: int, y: int) -> None:
+    """alpha_composite that tolerates a sprite partly outside the canvas."""
+    width, height = canvas.size
+    left, top = max(x, 0), max(y, 0)
+    right, bottom = min(x + sprite.width, width), min(y + sprite.height, height)
+    if right <= left or bottom <= top:
+        return
+    canvas.alpha_composite(sprite.crop((left - x, top - y, right - x, bottom - y)), (left, top))
+
+
+def _drift_frames(size: tuple[int, int], sprites: list[tuple]) -> Iterator[Image.Image]:
+    """Yield the animation frames. Positions repeat after DRIFT_FRAMES, so the loop is seamless."""
+    for number in range(DRIFT_FRAMES):
+        t = 2 * math.pi * number / DRIFT_FRAMES
+        frame = Image.new("RGBA", size, (0, 0, 0, 0))
+        for sprite, left, top, amp_x, amp_y, kx, ky, phase_x, phase_y in sprites:
+            _blit(frame, sprite, left + round(amp_x * math.sin(kx * t + phase_x)),
+                  top + round(amp_y * math.sin(ky * t + phase_y)))
+        yield frame
+
+
+def _rotate_frames(base: Image.Image) -> Iterator[Image.Image]:
+    for number in range(ROTATE_FRAMES):
+        yield base.rotate(-360 * number / ROTATE_FRAMES, resample=Image.Resampling.BICUBIC)
+
+
+def _gif_frames(frames: Iterator[Image.Image], size: int, durations: list[int]) -> bytes:
+    """RGBA frames -> one GIF with a transparent background (shared palette, no dithering).
+
+    Frames are shrunk as they arrive, so only small copies are kept in memory.
+    """
+    flat = [ImageOps.contain(frame, (size, size), RESAMPLE) for frame in frames]
     # One palette for every frame, taken from a mosaic of all of them (so later frames keep their colours).
     cols = max(1, int(len(flat) ** 0.5 + 0.999))
     tile = min(size, max(48, 480 // cols))
@@ -451,24 +538,36 @@ def _gif_frames(frames: list[Image.Image], size: int, durations: list[int]) -> b
     return buffer.getvalue()
 
 
-def process_loading(data: bytes, *, transparent: bool = True, rotate: bool = False) -> bytes:
+def process_loading(data: bytes, *, transparent: bool = True, motion: str = "none",
+                    rotate: bool = False) -> bytes:
     """Turn an uploaded picture (PNG, JPG, WebP or GIF, still or animated) into a small GIF.
 
     transparent: make a dark background see-through (images that already have transparency keep it).
-    rotate: for a single picture, add a slow full rotation so it looks like "loading".
+    motion (only for a single picture): "drift" = every separate shape wanders on its own small
+        loop, "rotate" = the whole picture turns slowly, "none" = stays still.
+    An animated upload keeps its own animation.
     """
+    if rotate:
+        motion = "rotate"
+    if motion not in MOTIONS:
+        motion = "none"
     try:
         with Image.open(io.BytesIO(data)) as source:
             if source.format not in {"PNG", "JPEG", "WEBP", "GIF"}:
                 raise BackgroundError("只支援 PNG、JPG、WebP 或 GIF 圖片。")
-            if source.width * source.height > config.MAX_BACKGROUND_PIXELS:
-                raise BackgroundError("這張圖片的像素太多，請縮小後再上傳。")
+            if source.width * source.height > config.LOADING_MAX_PIXELS:
+                raise BackgroundError("這張圖片的像素太多，載入圖用不到這麼大，請縮小到約 2400×2400 以內再上傳。")
+            source.draft("RGB", (DRIFT_WORK_SIZE, DRIFT_WORK_SIZE))     # JPEG: decode small
             total = getattr(source, "n_frames", 1)
             step = max(1, -(-total // config.LOADING_MAX_FRAMES))        # keep at most 40 frames
             frames, durations = [], []
             for index in range(0, total, step):
                 source.seek(index)
                 raw = source.convert("RGBA")
+                if max(raw.size) > DRIFT_WORK_SIZE:                    # work at a small size from here on
+                    shrunk = ImageOps.contain(raw, (DRIFT_WORK_SIZE, DRIFT_WORK_SIZE), RESAMPLE)
+                    raw.close()
+                    raw = shrunk
                 has_alpha = raw.getchannel("A").getextrema()[0] < 255
                 frames.append(_key_out_black(raw) if transparent and not has_alpha else raw)
                 durations.append(int(source.info.get("duration") or FRAME_MS) * step)
@@ -479,19 +578,27 @@ def process_loading(data: bytes, *, transparent: bool = True, rotate: bool = Fal
     except (OSError, ValueError, EOFError, Image.DecompressionBombError) as exc:
         raise BackgroundError("無法讀取這個檔案，請確認它是 PNG、JPG、WebP 或 GIF 圖片。") from exc
 
+    extra: list[Image.Image] = []
     try:
-        if len(frames) == 1 and rotate:
+        make_frames = lambda: iter(frames)
+        if len(frames) == 1 and motion != "none":
             base = frames[0]
-            turned = []
-            for n in range(ROTATE_FRAMES):
-                turned.append(base.rotate(-360 * n / ROTATE_FRAMES, resample=Image.Resampling.BICUBIC))
-            frames, durations = turned, [FRAME_MS] * ROTATE_FRAMES
-            base.close()
+            if max(base.size) > DRIFT_WORK_SIZE:
+                base = ImageOps.contain(base, (DRIFT_WORK_SIZE, DRIFT_WORK_SIZE), RESAMPLE)
+                extra.append(base)
+            if motion == "drift":
+                sprites = _make_sprites(base)
+                extra.extend(item[0] for item in sprites)
+                make_frames = lambda: _drift_frames(base.size, sprites)
+                durations = [DRIFT_MS] * DRIFT_FRAMES
+            else:
+                make_frames = lambda: _rotate_frames(base)
+                durations = [FRAME_MS] * ROTATE_FRAMES
         for size in (config.LOADING_SIZE, 200, 160, 128):                  # shrink until it is small enough
-            result = _gif_frames(frames, size, durations)
+            result = _gif_frames(make_frames(), size, durations)
             if len(result) <= config.LOADING_MAX_BYTES:
                 return result
         raise BackgroundError("這張動畫太大，請換一張較小或較短的。")
     finally:
-        for frame in frames:
-            frame.close()
+        for image in frames + extra:
+            image.close()

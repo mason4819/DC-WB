@@ -86,6 +86,7 @@ MAX_STORED_BACKGROUND_BYTES = 600 * 1024                # what is kept in the da
 LOADING_IMAGE = ASSETS_DIR / "loading.gif"
 LOADING_SIZE = 240                                      # pixels; it is shown small
 LOADING_MAX_FRAMES = 40
+LOADING_MAX_PIXELS = 6_000_000                          # it is shrunk to 240 px anyway, so no need for more
 LOADING_MAX_BYTES = 2 * 1024 * 1024                     # what is kept in the database
 
 # --- Message defaults and limits -------------------------------------------
