@@ -1,4 +1,5 @@
 """Shared Discord helpers: permission checks, safe message delivery, command group."""
+import io
 import logging
 from typing import Awaitable, Callable, Optional
 
@@ -118,7 +119,7 @@ def build_message_kwargs(user: discord.abc.User, text: str, use_embed: bool, col
 
 async def deliver(*, bot: commands.Bot, guild: discord.Guild, channel_id: Optional[int],
                   user: discord.abc.User, text: str, use_embed: bool, colour: int,
-                  make_image: Optional[Callable[[], Awaitable[Optional[discord.File]]]] = None,
+                  make_image: Optional[Callable[[], Awaitable[Optional[bytes]]]] = None,
                   ping_user: bool = False) -> tuple[bool, list[str]]:
     """Post a welcome/leave message and never raise.
 
@@ -150,9 +151,11 @@ async def deliver(*, bot: commands.Bot, guild: discord.Guild, channel_id: Option
             else:
                 if perms.embed_links:       # show "generating..." while the image is being drawn
                     placeholder = await _send_loading(channel, user)
-                file = await make_image()
-                if file is None:
+                png = await make_image()
+                if png is None:
                     notes.append("歡迎圖片產生失敗，已略過圖片。")
+                else:
+                    file = discord.File(io.BytesIO(png), filename="welcome.png")
 
         kwargs = build_message_kwargs(user, text, use_embed, colour, file)
         kwargs["allowed_mentions"] = (discord.AllowedMentions(users=[user], roles=False, everyone=False)
@@ -196,3 +199,38 @@ async def _delete_quietly(message: discord.Message) -> None:
         await message.delete()
     except discord.HTTPException:
         log.info("Could not delete the generating message %s", message.id)
+
+
+async def deliver_dm(*, user: discord.abc.User, guild: discord.Guild, text: str, use_embed: bool, colour: int,
+                     make_image: Optional[Callable[[], Awaitable[Optional[bytes]]]] = None) -> tuple[bool, list[str]]:
+    """Send the welcome message to the member privately. Never raises.
+
+    The message is the same as in the channel; a small "from <server>" line is added so the member
+    knows where it comes from. Members can switch off private messages from server members, and
+    bots cannot be messaged, so failure is normal and only reported.
+    """
+    if getattr(user, "bot", False):
+        return False, ["對方是機器人，無法私訊。"]
+    notes: list[str] = []
+    file: Optional[discord.File] = None
+    if make_image is not None:
+        png = await make_image()
+        if png is None:
+            notes.append("歡迎圖片產生失敗，私訊略過圖片。")
+        else:
+            file = discord.File(io.BytesIO(png), filename="welcome.png")
+
+    kwargs = build_message_kwargs(user, text, use_embed, colour, file)
+    if use_embed:
+        icon = guild.icon.url if getattr(guild, "icon", None) else None
+        kwargs["embed"].set_footer(text=f"來自 {guild.name}", icon_url=icon)
+    else:
+        kwargs["content"] = f"{text}\n\n— 來自 {guild.name}"
+    try:
+        await user.send(**kwargs)
+    except discord.Forbidden:
+        return False, ["無法私訊這位成員（對方關閉了「允許伺服器成員私訊」）。"]
+    except discord.HTTPException as exc:
+        log.warning("Discord API error while sending a DM in guild %s: %s", guild.id, exc)
+        return False, [f"私訊失敗，Discord 回傳錯誤（{exc.status}）。"]
+    return True, notes

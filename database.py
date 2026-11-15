@@ -46,7 +46,8 @@ SCHEMA_STATEMENTS = [
         use_embed       INTEGER NOT NULL DEFAULT 1,
         image_enabled   INTEGER NOT NULL DEFAULT 0,
         background_path TEXT,
-        theme           TEXT    NOT NULL DEFAULT 'black'
+        theme           TEXT    NOT NULL DEFAULT 'black',
+        delivery        TEXT    NOT NULL DEFAULT 'channel'
     )""",
     """CREATE TABLE IF NOT EXISTS leave_settings (
         guild_id   INTEGER PRIMARY KEY REFERENCES guild_settings(guild_id) ON DELETE CASCADE,
@@ -81,6 +82,21 @@ SCHEMA_STATEMENTS = [
         data       BLOB    NOT NULL,
         updated_at INTEGER NOT NULL
     )""",
+    """CREATE TABLE IF NOT EXISTS autorole_roles (
+        guild_id INTEGER NOT NULL,
+        role_id  INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, role_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS bot_metrics (
+        ts      INTEGER NOT NULL,
+        host    TEXT    NOT NULL,
+        latency REAL,
+        memory  REAL,
+        cpu     REAL,
+        guilds  INTEGER,
+        members INTEGER,
+        PRIMARY KEY (ts, host)
+    )""",
     """CREATE TABLE IF NOT EXISTS autorole_settings (
         guild_id INTEGER PRIMARY KEY REFERENCES guild_settings(guild_id) ON DELETE CASCADE,
         enabled  INTEGER NOT NULL DEFAULT 0,
@@ -91,7 +107,7 @@ SCHEMA_STATEMENTS = [
 # Maps the short kind name used by the cogs to its table and editable columns.
 _TABLES = {
     "welcome": ("welcome_settings", {"enabled", "channel_id", "message", "use_embed",
-                                     "image_enabled", "background_path", "theme"}),
+                                     "image_enabled", "background_path", "theme", "delivery"}),
     "leave": ("leave_settings", {"enabled", "channel_id", "message", "use_embed"}),
     "autorole": ("autorole_settings", {"enabled", "role_id"}),
 }
@@ -139,6 +155,8 @@ def _encode(value: Any) -> dict:
         return {"type": "null"}
     if isinstance(value, (bool, int)):
         return {"type": "integer", "value": str(int(value))}
+    if isinstance(value, float):
+        return {"type": "float", "value": value}
     if isinstance(value, (bytes, bytearray)):
         return {"type": "blob", "base64": base64.b64encode(bytes(value)).decode().rstrip("=")}
     return {"type": "text", "value": str(value)}
@@ -249,19 +267,37 @@ def clear_cache() -> None:
     _cache.clear()
 
 
+# Columns added after the first release: (name, definition). Added to existing databases on start.
+_LATER_COLUMNS = [
+    ("theme", "TEXT NOT NULL DEFAULT 'black'"),
+    ("delivery", "TEXT NOT NULL DEFAULT 'channel'"),
+]
+
+
 async def _migrate() -> None:
-    """Add columns introduced after the first release to tables that already exist."""
+    """Bring databases from older versions up to date (safe to run on every start)."""
     try:
         columns = {row["name"] for row in (await _backend.run([("PRAGMA table_info(welcome_settings)", ())]))[0]}
     except DatabaseError:
         columns = set()
-    if "theme" not in columns:
+    for name, definition in _LATER_COLUMNS:
+        if name in columns:
+            continue
         try:
-            await _backend.run([("ALTER TABLE welcome_settings ADD COLUMN theme TEXT NOT NULL DEFAULT 'black'", ())])
-            log.info("Database updated: added welcome_settings.theme")
+            await _backend.run([(f"ALTER TABLE welcome_settings ADD COLUMN {name} {definition}", ())])
+            log.info("Database updated: added welcome_settings.%s", name)
         except DatabaseError as exc:
             if "duplicate" not in str(exc).lower():     # already there is fine
                 raise
+    # The auto role used to be one column; it is now a list. Move any old value over.
+    try:
+        await _backend.run([
+            ("INSERT OR IGNORE INTO autorole_roles (guild_id, role_id) "
+             "SELECT guild_id, role_id FROM autorole_settings WHERE role_id IS NOT NULL", ()),
+            ("UPDATE autorole_settings SET role_id = NULL WHERE role_id IS NOT NULL", ()),
+        ])
+    except DatabaseError:
+        log.warning("Could not move the old auto role into the new list", exc_info=True)
 
 
 async def close() -> None:
@@ -414,7 +450,7 @@ async def peek_settings(kind: str, guild_id: int) -> Optional[dict[str, Any]]:
 
 async def delete_guild_data(guild_id: int) -> None:
     """Remove everything stored for a server (settings, management list)."""
-    tables = ("access_list", "welcome_settings", "leave_settings", "autorole_settings", "custom_backgrounds",
+    tables = ("access_list", "welcome_settings", "leave_settings", "autorole_settings", "autorole_roles", "custom_backgrounds",
               "guild_settings")
     await _backend.run([(f"DELETE FROM {table} WHERE guild_id = ?", (guild_id,)) for table in tables])
     for key in [key for key in _cache if key[1] == guild_id]:
@@ -500,3 +536,73 @@ async def set_asset(name: str, data: bytes) -> None:
 async def delete_asset(name: str) -> None:
     await _backend.run([("DELETE FROM app_assets WHERE name = ?", (name,))])
     _cache[(f"asset:{name}", 0)] = {"data": None}
+
+
+# ------------------------------------------------------------ auto roles (a list)
+MAX_AUTOROLES = 10
+
+
+async def get_autoroles(guild_id: int) -> list[int]:
+    """Role IDs given to every new member, oldest first. Read once per server, then from memory."""
+    key = ("autoroles", guild_id)
+    cached = _cache.get(key)
+    if cached is None:
+        rows = (await _backend.run([("SELECT role_id FROM autorole_roles WHERE guild_id = ? ORDER BY rowid", (guild_id,))]))[0]
+        cached = {"ids": [row["role_id"] for row in rows]}
+        if len(_cache) >= _CACHE_LIMIT:
+            _cache.clear()
+        _cache[key] = cached
+    return list(cached["ids"])
+
+
+async def add_autorole(guild_id: int, role_id: int) -> str:
+    """Returns "added", "exists" or "full"."""
+    current = await get_autoroles(guild_id)
+    if role_id in current:
+        return "exists"
+    if len(current) >= MAX_AUTOROLES:
+        return "full"
+    await _backend.run([("INSERT OR IGNORE INTO guild_settings (guild_id) VALUES (?)", (guild_id,)),
+                        ("INSERT OR IGNORE INTO autorole_roles (guild_id, role_id) VALUES (?, ?)", (guild_id, role_id))])
+    _cache[("autoroles", guild_id)] = {"ids": [*current, role_id]}
+    return "added"
+
+
+async def remove_autorole(guild_id: int, role_id: Optional[int] = None) -> int:
+    """Remove one role, or every role when role_id is None. Returns how many were removed."""
+    current = await get_autoroles(guild_id)
+    keep = [] if role_id is None else [r for r in current if r != role_id]
+    removed = len(current) - len(keep)
+    if removed:
+        if role_id is None:
+            await _backend.run([("DELETE FROM autorole_roles WHERE guild_id = ?", (guild_id,))])
+        else:
+            await _backend.run([("DELETE FROM autorole_roles WHERE guild_id = ? AND role_id = ?", (guild_id, role_id))])
+        _cache[("autoroles", guild_id)] = {"ids": keep}
+    return removed
+
+
+async def set_autoroles(guild_id: int, role_ids: list[int]) -> None:
+    """Replace the whole list."""
+    unique = list(dict.fromkeys(role_ids))[:MAX_AUTOROLES]
+    statements = [("INSERT OR IGNORE INTO guild_settings (guild_id) VALUES (?)", (guild_id,)),
+                  ("DELETE FROM autorole_roles WHERE guild_id = ?", (guild_id,))]
+    statements += [("INSERT INTO autorole_roles (guild_id, role_id) VALUES (?, ?)", (guild_id, rid)) for rid in unique]
+    await _backend.run(statements)
+    _cache[("autoroles", guild_id)] = {"ids": unique}
+
+
+# ------------------------------------------------------------ bot metrics (for the status chart)
+async def add_metric(ts: int, host: str, latency: Optional[float], memory: Optional[float],
+                     cpu: Optional[float], guilds: int, members: int) -> None:
+    await _backend.run([("INSERT OR REPLACE INTO bot_metrics (ts, host, latency, memory, cpu, guilds, members) "
+                         "VALUES (?, ?, ?, ?, ?, ?, ?)", (ts, host, latency, memory, cpu, guilds, members))])
+
+
+async def load_metrics(since_ts: int) -> list[dict]:
+    return (await _backend.run([("SELECT ts, host, latency, memory, cpu, guilds, members FROM bot_metrics "
+                                 "WHERE ts >= ? ORDER BY ts", (since_ts,))]))[0]
+
+
+async def prune_metrics(before_ts: int) -> None:
+    await _backend.run([("DELETE FROM bot_metrics WHERE ts < ?", (before_ts,))])

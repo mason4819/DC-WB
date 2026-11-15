@@ -10,6 +10,7 @@ Only the bot owner can use it: the IDs in OWNER_IDS, or the application owner if
 empty. Everything is answered privately (ephemeral). Panels stay in memory for 5 minutes.
 """
 import asyncio
+import io
 import logging
 import time
 from typing import Callable, Optional
@@ -22,6 +23,7 @@ import config
 import database
 import ha
 from utils import assets_store, remote
+from utils.sysinfo import memory_mb
 from utils import image as imaging
 from utils.access import NotBotOwner
 
@@ -36,18 +38,6 @@ PANEL_TIMEOUT = 300
 
 def _short(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit - 1] + "…"
-
-
-def _memory_mb() -> Optional[float]:
-    """Resident memory of this process (Linux). None where /proc is not available."""
-    try:
-        with open("/proc/self/status", encoding="utf-8") as status:
-            for line in status:
-                if line.startswith("VmRSS:"):
-                    return int(line.split()[1]) / 1024
-    except (OSError, ValueError):
-        pass
-    return None
 
 
 def _duration(seconds: float) -> str:
@@ -315,7 +305,7 @@ class BackendCog(commands.Cog, name="Backend"):
         await interaction.response.defer(ephemeral=True)
         supervisor = ha.active_supervisor
         guilds = self.bot.guilds
-        memory = _memory_mb()
+        memory = memory_mb()
 
         embed = discord.Embed(title=f"後臺狀態 · {config.NODE_NAME}", colour=config.WELCOME_COLOR)
         role = {"leader": "🟢 使用中（連線 Discord）", "standby": "🟡 備用"}.get(supervisor.role if supervisor else "", "單機模式")
@@ -353,6 +343,23 @@ class BackendCog(commands.Cog, name="Backend"):
                 f"{state} {offload}\n持續 {_duration(now - ha.peer['since'])}　上次檢查 {int(now - ha.peer['checked'])} 秒前\n"
                 f"檢查間隔：{every} 秒（對方沒回應時每分鐘，兩台都在時每 5 分鐘）\n`{config.PEER_URL}`"))
         await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @backend.command(name="狀態圖", description="立刻畫出機器人狀態的折線圖（延遲、記憶體、CPU）")
+    @app_commands.describe(minutes="要看最近幾分鐘（10 到 1440，預設 60）")
+    @app_commands.rename(minutes="分鐘")
+    async def status_chart(self, interaction: discord.Interaction,
+                           minutes: app_commands.Range[int, 10, 1440] = 60) -> None:
+        monitor = self.bot.get_cog("Monitor")
+        if monitor is None or not config.MONITOR_ENABLED:
+            await interaction.response.send_message("狀態監控目前是關閉的（環境變數 `MONITOR=false`）。", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        png = await monitor.chart_png(minutes)
+        if png is None:
+            await interaction.followup.send("資料還不夠，每 30 秒記錄一次，請稍等一分鐘再試。", ephemeral=True)
+            return
+        await interaction.followup.send(f"最近 {minutes} 分鐘（共 {len(monitor.samples)} 筆紀錄，保留 {config.METRIC_RETENTION_HOURS} 小時）",
+                                        file=discord.File(io.BytesIO(png), filename="status.png"), ephemeral=True)
 
     @backend.command(name="封鎖", description="封鎖一個伺服器：目前在裡面就離開，之後被邀請也會自動離開")
     @app_commands.describe(server_id="伺服器 ID")

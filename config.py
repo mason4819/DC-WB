@@ -89,6 +89,21 @@ LOADING_MAX_FRAMES = 40
 LOADING_MAX_PIXELS = 6_000_000                          # it is shrunk to 240 px anyway, so no need for more
 LOADING_MAX_BYTES = 2 * 1024 * 1024                     # what is kept in the database
 
+# --- Bot status monitor (cogs/monitor.py) -----------------------------------
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name, "").strip()
+    return int(value) if value.isdigit() else default
+
+
+MONITOR_ENABLED = os.getenv("MONITOR", "true").strip().lower() in {"1", "true", "yes", "on"}
+MONITOR_INTERVAL = 30                    # seconds between samples
+# Where the status chart is posted (one message that is edited, not a new message every time).
+STATUS_GUILD_ID = _env_int("STATUS_GUILD_ID", 1568243245777944617)
+STATUS_CHANNEL_ID = _env_int("STATUS_CHANNEL_ID", 1568248329240842291)
+CHART_MINUTES = min(max(_env_int("CHART_MINUTES", 60), 10), 720)      # how far back the chart shows
+MONITOR_POST_EVERY = max(_env_int("MONITOR_POST_EVERY", 1), 1)        # refresh the chart every N samples
+METRIC_RETENTION_HOURS = 24              # older samples are deleted from the database
+
 # --- Message defaults and limits -------------------------------------------
 DEFAULT_WELCOME_MESSAGE = "歡迎 {user} 加入 {server}！你是第 {member_count} 位成員。"
 DEFAULT_LEAVE_MESSAGE = "{username} 離開了 {server}，目前共有 {member_count} 位成員。"

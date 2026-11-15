@@ -7,6 +7,7 @@ import config
 import database
 from utils import image as imaging
 from utils.access import require_authorized
+from cogs.welcome import DELIVERY_LABELS
 from utils.messaging import channel_warnings, get_bot_member, role_problem
 
 
@@ -40,12 +41,13 @@ class SettingsCog(commands.Cog, name="Settings"):
 
         embed.add_field(
             name="歡迎系統",
-            value=(f"{_status(welcome['enabled'])}\n頻道：{_channel_text(welcome['channel_id'])}\n"
+            value=(f"{_status(welcome['enabled'])}\n發送方式：{DELIVERY_LABELS[welcome['delivery']]}\n"
+                   f"頻道：{_channel_text(welcome['channel_id'])}\n"
                    f"樣式：{'嵌入式訊息' if welcome['use_embed'] else '純文字'}\n"
                    f"圖片：{'開啟' if welcome['image_enabled'] else '關閉'}（{imaging.get_theme(welcome['theme'])['label']}）\n"
                    f"內容：`{_short(welcome['message'])}`"),
             inline=False)
-        if welcome["enabled"]:
+        if welcome["enabled"] and (welcome["delivery"] == "channel" or (welcome["delivery"] == "both" and welcome["channel_id"])):
             problems += await channel_warnings(
                 self.bot, guild.get_channel(welcome["channel_id"]) if welcome["channel_id"] else None,
                 embeds=bool(welcome["use_embed"]), files=bool(welcome["image_enabled"]))
@@ -61,18 +63,21 @@ class SettingsCog(commands.Cog, name="Settings"):
                 self.bot, guild.get_channel(leave["channel_id"]) if leave["channel_id"] else None,
                 embeds=bool(leave["use_embed"]), files=False)
 
-        role = guild.get_role(autorole["role_id"]) if autorole["role_id"] else None
+        role_ids = await database.get_autoroles(guild.id)
+        mentions = [guild.get_role(i).mention if guild.get_role(i) else f"（已不存在）`{i}`" for i in role_ids]
         embed.add_field(
             name="自動身分組",
-            value=f"{_status(autorole['enabled'])}\n身分組：{role.mention if role else '尚未設定'}",
+            value=f"{_status(autorole['enabled'])}\n身分組（{len(role_ids)}/{database.MAX_AUTOROLES}）：{'、'.join(mentions) if mentions else '尚未設定'}",
             inline=False)
         if autorole["enabled"]:
-            if role is None:
-                problems.append("自動身分組已經不存在，請用 `/自動身分組 設定` 重新選擇。")
-            else:
-                me = await get_bot_member(self.bot, guild)
-                problem = role_problem(me, role) if me else None
-                if problem:
+            if not role_ids:
+                problems.append("自動身分組已啟用但清單是空的，請用 `/自動身分組 新增` 加入身分組。")
+            me = await get_bot_member(self.bot, guild)
+            for role_id in role_ids:
+                role = guild.get_role(role_id)
+                if role is None:
+                    problems.append(f"自動身分組 `{role_id}` 已經不存在，請用 `/自動身分組 移除` 清理。")
+                elif me and (problem := role_problem(me, role)):
                     problems.append(problem)
 
         access = await database.get_access(guild.id)

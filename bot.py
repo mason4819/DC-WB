@@ -33,6 +33,7 @@ EXTENSIONS = (
     "cogs.settings",
     "cogs.access",
     "cogs.backend",
+    "cogs.monitor",
     "cogs.status",
 )
 
