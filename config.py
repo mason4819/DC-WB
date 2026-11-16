@@ -106,7 +106,7 @@ METRIC_RETENTION_HOURS = 24              # older samples are deleted from the da
 
 # --- Invite command (cogs/invite.py) -----------------------------------------
 # Bot homepage shown on the /邀請 embed. Override with HOMEPAGE_URL in .env if it moves.
-HOMEPAGE_URL = os.getenv("HOMEPAGE_URL", "").strip() or "https://mason4819.github.io/WCB迎賓客/"
+HOMEPAGE_URL = os.getenv("HOMEPAGE_URL", "").strip() or "https://mason4819.github.io/%E8%BF%8E%E8%B3%93%E5%AE%A2WCB/"
 INVITE_COOLDOWN_SECONDS = 30            # per member, so nobody can flood a channel with invite cards
 INVITE_COLOR = 0x8E9297
 

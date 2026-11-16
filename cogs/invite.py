@@ -28,18 +28,32 @@ def invite_url(bot: commands.Bot) -> str:
 
 def build_invite(bot: commands.Bot) -> tuple[discord.Embed, discord.ui.View]:
     url = invite_url(bot)
+    name = bot.user.name
+    avatar = bot.user.display_avatar.url if bot.user.display_avatar else None
+
     embed = discord.Embed(
-        title="邀請迎賓客到你的伺服器",
-        description=(f"{bot.user.name} 是輕量的歡迎機器人：歡迎訊息、離開訊息、歡迎圖片與自動身分組。\n\n"
-                     f"**[點此邀請機器人]({url})**\n"
-                     f"**[機器人首頁]({config.HOMEPAGE_URL})**"),
+        title="把迎賓客帶到你的伺服器",
+        description=("輕量、穩定、全中文的歡迎機器人。\n"
+                     "新成員一加入，就有一張專屬的歡迎圖迎接他們。"),
         colour=config.INVITE_COLOR,
     )
-    if bot.user.display_avatar:
-        embed.set_thumbnail(url=bot.user.display_avatar.url)
+    embed.set_author(name=name, icon_url=avatar, url=config.HOMEPAGE_URL)
+    if avatar:
+        embed.set_thumbnail(url=avatar)
+
+    embed.add_field(name="🖼️  歡迎圖片", value="黑白簡約線條\n四種色系可選", inline=True)
+    embed.add_field(name="💬  歡迎 / 離開", value="頻道、私訊\n或兩者同時", inline=True)
+    embed.add_field(name="🏷️  自動身分組", value="新成員加入\n自動發放", inline=True)
+    embed.add_field(
+        name="\u200b",
+        value=f"**[➜ 邀請機器人]({url})**　·　**[機器人首頁]({config.HOMEPAGE_URL})**",
+        inline=False)
+    embed.set_footer(text="所有指令皆為中文，輸入 / 即可查看")
+
     view = discord.ui.View(timeout=None)          # link buttons need no callbacks, so no state to keep
-    view.add_item(discord.ui.Button(label="邀請機器人", style=discord.ButtonStyle.link, url=url))
-    view.add_item(discord.ui.Button(label="機器人首頁", style=discord.ButtonStyle.link, url=config.HOMEPAGE_URL))
+    view.add_item(discord.ui.Button(label="邀請機器人", emoji="➕", style=discord.ButtonStyle.link, url=url))
+    view.add_item(discord.ui.Button(label="機器人首頁", emoji="🏠", style=discord.ButtonStyle.link,
+                                    url=config.HOMEPAGE_URL))
     return embed, view
 
 
