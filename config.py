@@ -104,6 +104,12 @@ CHART_MINUTES = min(max(_env_int("CHART_MINUTES", 60), 10), 720)      # how far 
 MONITOR_POST_EVERY = max(_env_int("MONITOR_POST_EVERY", 1), 1)        # refresh the chart every N samples
 METRIC_RETENTION_HOURS = 24              # older samples are deleted from the database
 
+# --- Invite command (cogs/invite.py) -----------------------------------------
+# Bot homepage shown on the /邀請 embed. Override with HOMEPAGE_URL in .env if it moves.
+HOMEPAGE_URL = os.getenv("HOMEPAGE_URL", "").strip() or "https://mason4819.github.io/WCB迎賓客/"
+INVITE_COOLDOWN_SECONDS = 30            # per member, so nobody can flood a channel with invite cards
+INVITE_COLOR = 0x8E9297
+
 # --- Message defaults and limits -------------------------------------------
 DEFAULT_WELCOME_MESSAGE = "歡迎 {user} 加入 {server}！你是第 {member_count} 位成員。"
 DEFAULT_LEAVE_MESSAGE = "{username} 離開了 {server}，目前共有 {member_count} 位成員。"

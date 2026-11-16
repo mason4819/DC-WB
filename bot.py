@@ -35,6 +35,7 @@ EXTENSIONS = (
     "cogs.backend",
     "cogs.monitor",
     "cogs.status",
+    "cogs.invite",
 )
 
 
@@ -55,6 +56,8 @@ class BotTree(app_commands.CommandTree):
             text = "目前無法確認你的權限，請稍後再試。"
         elif isinstance(error, app_commands.MissingPermissions):
             text = "你需要「管理伺服器」或「管理員」權限才能使用這個指令。"
+        elif isinstance(error, app_commands.CommandOnCooldown):
+            text = f"太快了，請在 {error.retry_after:.0f} 秒後再試。"
         elif isinstance(error, app_commands.NoPrivateMessage):
             text = "這個指令只能在伺服器內使用。"
         elif isinstance(error, app_commands.CheckFailure):
