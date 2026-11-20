@@ -22,7 +22,7 @@ from discord.ext import commands
 import config
 import database
 import ha
-from utils import assets_store, remote
+from utils import assets_store, cmdsync, remote
 from utils.sysinfo import memory_mb
 from utils import image as imaging
 from utils.access import NotBotOwner
@@ -463,9 +463,7 @@ class BackendCog(commands.Cog, name="Backend"):
     async def sync_commands(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
         try:
-            count = len(await self.bot.tree.sync())
-            if config.ADMIN_GUILD_ID:
-                count += len(await self.bot.tree.sync(guild=discord.Object(id=config.ADMIN_GUILD_ID)))
+            count, _ = await cmdsync.sync(self.bot, force=True)
         except discord.HTTPException as exc:
             await interaction.followup.send(f"❌ 同步失敗（{exc.status}），請稍後再試。", ephemeral=True)
             return

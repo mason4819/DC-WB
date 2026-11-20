@@ -1,14 +1,15 @@
 """Bot status monitor: samples the bot every 30 seconds and keeps a line chart up to date.
 
-- Every 30 s it records: Discord latency, memory, CPU use, server and member counts.
-  Samples are kept in the database for 24 hours, so the history survives restarts and the
-  switch to the other host. (Only the host that is connected to Discord records.)
+- Every 30 s it records: Discord latency, memory, CPU use, server and member counts (in memory).
+  Samples are saved to the database in batches (one request every MONITOR_WRITE_EVERY samples,
+  default 10, and once more when the bot shuts down) and kept for 24 hours, so the history survives
+  restarts and the switch to the other host. (Only the host that is connected to Discord records.)
 - The chart (latency, memory, CPU) goes to ONE message in the status channel, which is edited
   in place on every refresh, so the channel is never flooded. Its id is stored in the database,
   so after a restart or a failover the same message keeps being updated.
 - Settings (env): MONITOR=false switches it off; STATUS_GUILD_ID / STATUS_CHANNEL_ID choose where
   it is posted; CHART_MINUTES (default 60) is how far back the chart looks; MONITOR_POST_EVERY
-  (default 1) refreshes the chart every N samples if you want to save CPU.
+  (default 4, i.e. every 2 minutes) redraws the chart every N samples; set it to 1 for every 30 s.
 - Failures (missing channel, no permission) are logged at most every 10 minutes and retried.
 """
 import asyncio
@@ -42,6 +43,7 @@ class MonitorCog(commands.Cog, name="Monitor"):
         self.bot = bot
         self.samples: deque[dict] = deque(maxlen=RETENTION_SAMPLES)
         self._ticks = 0
+        self._pending: list[dict] = []          # samples not yet saved to the database
         self._posted_once = False
         self._cpu_mark: Optional[tuple[float, float]] = None
         self._message_id: Optional[int] = None
@@ -56,6 +58,10 @@ class MonitorCog(commands.Cog, name="Monitor"):
 
     async def cog_unload(self) -> None:
         self.sample_loop.cancel()
+        try:
+            await self._flush()                 # do not lose the last few samples on a handover
+        except Exception:
+            log.warning("Could not save the last status samples", exc_info=True)
 
     # ------------------------------------------------------------------ sampling
     def collect(self) -> dict:
@@ -95,17 +101,31 @@ class MonitorCog(commands.Cog, name="Monitor"):
         except (database.DatabaseError, ValueError):
             log.warning("Could not load the earlier status samples", exc_info=True)
 
+    async def _flush(self) -> None:
+        """Save the waiting samples in one database request. They stay queued if it fails."""
+        if not self._pending:
+            return
+        batch = list(self._pending)
+        try:
+            await database.add_metrics(batch)
+        except database.DatabaseError:
+            self._warn("無法把狀態紀錄寫進資料庫（圖表仍會用記憶體裡的資料，稍後再試）")
+            del self._pending[:-240]            # never grow without limit (keeps the last two hours)
+            return
+        del self._pending[:len(batch)]
+
     async def tick(self) -> None:
         sample = self.collect()
         self.samples.append(sample)
+        self._pending.append(sample)
         self._ticks += 1
-        try:
-            await database.add_metric(sample["ts"], sample["host"], sample["latency"], sample["memory"],
-                                      sample["cpu"], sample["guilds"], sample["members"])
-            if self._ticks % PRUNE_EVERY == 0:
+        if len(self._pending) >= config.MONITOR_WRITE_EVERY:
+            await self._flush()
+        if self._ticks % PRUNE_EVERY == 0:
+            try:
                 await database.prune_metrics(int(time.time()) - config.METRIC_RETENTION_HOURS * 3600)
-        except database.DatabaseError:
-            self._warn("無法把狀態紀錄寫進資料庫（圖表仍會用記憶體裡的資料）")
+            except database.DatabaseError:
+                self._warn("無法清理舊的狀態紀錄")
         # The first chart goes out at once; after that every MONITOR_POST_EVERY samples.
         if not self._posted_once or self._ticks % config.MONITOR_POST_EVERY == 0:
             self._posted_once = await self.publish() or self._posted_once
@@ -147,7 +167,7 @@ class MonitorCog(commands.Cog, name="Monitor"):
                              f"{sample['guilds']} 個伺服器　{sample['members']} 位成員\n"
                              f"更新：<t:{sample['ts']}:R>")
         embed.set_image(url=f"attachment://{FILE_NAME}")
-        embed.set_footer(text=f"每 {config.MONITOR_INTERVAL} 秒記錄一次　圖表為最近 {config.CHART_MINUTES} 分鐘")
+        embed.set_footer(text=f"每 {config.MONITOR_INTERVAL} 秒記錄一次，每 {config.MONITOR_INTERVAL * config.MONITOR_POST_EVERY} 秒更新圖表　圖表為最近 {config.CHART_MINUTES} 分鐘")
         return embed
 
     async def publish(self) -> bool:

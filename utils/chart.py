@@ -10,7 +10,7 @@ from typing import Optional
 
 from PIL import Image, ImageDraw
 
-from utils.image import THEMES, DEFAULT_THEME, _FontSet, _draw_glyphs, _fit_text, _glyphs_width
+from utils.image import THEMES, DEFAULT_THEME, _draw_glyphs, _fit_text, _glyphs_width, font_set
 
 TAIPEI = timezone(timedelta(hours=8))
 W, H = 900, 584
@@ -20,17 +20,14 @@ GAP_SECONDS = 100          # a hole longer than this (3 missed samples) breaks t
 
 
 class _Text:
-    """Draws text with the bundled fonts, reusing the opened fonts for the whole chart."""
+    """Draws text with the bundled fonts, reusing the opened fonts for every chart."""
 
     def __init__(self, draw: ImageDraw.ImageDraw) -> None:
-        self.draw, self._sets = draw, {}
+        self.draw = draw
 
     def put(self, x: float, centre_y: float, text: str, size: int, fill, bold: bool = False, align: str = "l",
             max_width: int = 400) -> None:
-        key = (bold, size)
-        if key not in self._sets:
-            self._sets[key] = _FontSet(bold, size)
-        fonts = self._sets[key]
+        fonts = font_set(bold, size)
         glyphs = fonts.layout(text)
         width = _glyphs_width(glyphs)
         if width > max_width:                                  # rare: very long host names

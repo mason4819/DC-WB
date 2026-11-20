@@ -10,10 +10,14 @@ Names from Discord can contain fancy Unicode, emoji or symbols. Text is normalis
 character is drawn with the first font in assets/fonts that really has a glyph for it, so no
 "tofu" boxes appear. Characters that no font supports are dropped instead of being drawn as boxes.
 
-Every image object is closed as soon as it is no longer needed and nothing is cached, so
-memory is released right after each render.
+Every image object is closed as soon as it is no longer needed, so memory is released right after
+each render. Only small things that never change are kept between renders: the font lists, the
+opened fonts (a few dozen at most), which characters each font has, the thin line layer of each
+theme (about 2 MB each, four themes) and the avatar mask. That saves re-reading fonts and redrawing
+the same lines for every new member.
 """
 import asyncio
+import functools
 import io
 import logging
 import math
@@ -85,10 +89,14 @@ def _family(path: Path) -> str:
     return path.stem.split("-")[0].split("[")[0]
 
 
-def _font_paths(bold: bool) -> list[Path]:
-    """One file per font family, ordered by priority. Uses the bold file if one exists."""
+@functools.lru_cache(maxsize=2)
+def _font_paths(bold: bool) -> tuple[Path, ...]:
+    """One file per font family, ordered by priority. Uses the bold file if one exists.
+
+    Cached: the folder is scanned once per weight, not on every render.
+    """
     if not config.FONT_DIR.is_dir():
-        return []
+        return ()
     families: dict[str, list[Path]] = {}
     for path in sorted(config.FONT_DIR.iterdir()):
         if path.suffix.lower() in {".ttf", ".otf"}:
@@ -102,7 +110,13 @@ def _font_paths(bold: bool) -> list[Path]:
 
     ordered = [chosen[name] for name in FONT_PRIORITY if name in chosen]
     ordered += [path for name, path in chosen.items() if name not in FONT_PRIORITY]
-    return ordered
+    return tuple(ordered)
+
+
+# Whether a font file contains a character does not depend on the size, so the answer is shared by
+# every size: {(font file, character): bool}. Bounded, because names can contain any character.
+_GLYPH_SUPPORT: dict[tuple[str, str], bool] = {}
+_GLYPH_SUPPORT_LIMIT = 20000
 
 
 class _FontSet:
@@ -113,7 +127,6 @@ class _FontSet:
         self._paths = _font_paths(bold)
         self._fonts: dict[int, Optional[ImageFont.FreeTypeFont]] = {}
         self._notdef: dict[int, bytes] = {}
-        self._support: dict[tuple[int, str], bool] = {}
         self.primary = self._open(0)
         if self.primary is None:
             self.primary = ImageFont.load_default(size)  # no CJK glyphs, but never crashes
@@ -131,12 +144,16 @@ class _FontSet:
 
     def _has_glyph(self, index: int, font: ImageFont.FreeTypeFont, ch: str) -> bool:
         """A character is missing if it renders exactly like an unassigned code point."""
-        key = (index, ch)
-        if key not in self._support:
+        key = (str(self._paths[index]), ch)
+        known = _GLYPH_SUPPORT.get(key)
+        if known is None:
             if index not in self._notdef:
                 self._notdef[index] = bytes(font.getmask("\uffff"))
-            self._support[key] = bytes(font.getmask(ch)) != self._notdef[index]
-        return self._support[key]
+            known = bytes(font.getmask(ch)) != self._notdef[index]
+            if len(_GLYPH_SUPPORT) >= _GLYPH_SUPPORT_LIMIT:
+                _GLYPH_SUPPORT.clear()
+            _GLYPH_SUPPORT[key] = known
+        return known
 
     def font_for(self, ch: str) -> Optional[ImageFont.FreeTypeFont]:
         """First font that really contains this character, or None."""
@@ -162,6 +179,12 @@ class _FontSet:
         return centre_y + (ascent - descent) / 2
 
 
+@functools.lru_cache(maxsize=32)
+def font_set(bold: bool, size: int) -> _FontSet:
+    """A shared _FontSet for this weight and size (renders run one at a time under RENDER_LOCK)."""
+    return _FontSet(bold, size)
+
+
 def sanitize_text(text: str) -> str:
     """Normalise fancy Unicode and drop characters that cannot be drawn sensibly.
 
@@ -182,7 +205,7 @@ def _fit_text(bold: bool, text: str, base_size: int, max_width: int, min_size: i
     """Shrink the font until the text fits; add an ellipsis if it still does not."""
     size = base_size
     while True:
-        fonts = _FontSet(bold, size)
+        fonts = font_set(bold, size)
         glyphs = fonts.layout(text)
         width = _glyphs_width(glyphs, spacing)
         if width <= max_width:
@@ -218,13 +241,21 @@ def _draw_line(draw: ImageDraw.ImageDraw, x: float, centre_y: float, text: str, 
 
 # --- Image helpers ---------------------------------------------------------
 def _circle_mask(diameter: int) -> Image.Image:
-    """Anti-aliased circular mask (drawn at 4x, then scaled down)."""
+    """Anti-aliased circular mask. Drawn once per size, then copied from the kept bytes."""
+    return Image.frombytes("L", (diameter, diameter), _circle_mask_bytes(diameter))
+
+
+@functools.lru_cache(maxsize=4)
+def _circle_mask_bytes(diameter: int) -> bytes:
+    """The mask pixels (drawn at 4x, then scaled down)."""
     scale = 4
     big = Image.new("L", (diameter * scale, diameter * scale), 0)
     ImageDraw.Draw(big).ellipse((0, 0, diameter * scale - 1, diameter * scale - 1), fill=255)
     mask = big.resize((diameter, diameter), RESAMPLE)
     big.close()
-    return mask
+    data = mask.tobytes()
+    mask.close()
+    return data
 
 
 def _circle_avatar(avatar_bytes: Optional[bytes], diameter: int, fallback) -> Image.Image:
@@ -270,7 +301,14 @@ def _load_background(background: Union[Path, bytes, None], theme: dict) -> Image
 
 
 def _line_layer(theme: dict) -> Image.Image:
-    """All the thin line work, drawn at 2x for smooth edges and scaled back down."""
+    """All the thin line work. It only depends on the theme, so it is drawn once per theme."""
+    return Image.frombytes("RGBA", (W, H), _line_layer_bytes(tuple(theme["fg"]), tuple(theme["line"])))
+
+
+@functools.lru_cache(maxsize=len(THEMES) + 1)
+def _line_layer_bytes(fg_rgb: tuple, line_rgb: tuple) -> bytes:
+    """The pixels of the line layer, drawn at 2x for smooth edges and scaled back down."""
+    theme = {"fg": fg_rgb, "line": line_rgb}
     k = 2
     layer = Image.new("RGBA", (W * k, H * k), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
@@ -291,7 +329,9 @@ def _line_layer(theme: dict) -> Image.Image:
 
     small = layer.resize((W, H), RESAMPLE)
     layer.close()
-    return small
+    data = small.tobytes()
+    small.close()
+    return data
 
 
 def _paste_outlined(canvas: Image.Image, text: str, font: ImageFont.FreeTypeFont,

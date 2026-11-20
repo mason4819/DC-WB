@@ -9,8 +9,8 @@ texts changes with the situation:
 
 Edit the lists below to change the texts. Each item is (activity type, text). Placeholders:
 {duty} {backup} {servers} {members}. Discord allows about 5 presence updates per 20 seconds,
-so STATUS_INTERVAL_SECONDS must not go below 5. Set STATUS_ROTATION=false to switch it off.
-Cost: one tiny gateway message every few seconds. No database, no HTTP requests.
+so the interval (env STATUS_INTERVAL, default 30 s) must not go below 5. Set STATUS_ROTATION=false to switch it off.
+Cost: one tiny gateway message every STATUS_INTERVAL seconds. No database, no HTTP requests.
 """
 import logging
 import os
@@ -26,7 +26,7 @@ from utils import remote
 
 log = logging.getLogger(__name__)
 
-STATUS_INTERVAL_SECONDS = 5
+STATUS_INTERVAL_SECONDS = config.STATUS_INTERVAL
 
 PLAYING = discord.ActivityType.playing
 WATCHING = discord.ActivityType.watching

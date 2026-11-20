@@ -96,13 +96,24 @@ def _env_int(name: str, default: int) -> int:
 
 
 MONITOR_ENABLED = os.getenv("MONITOR", "true").strip().lower() in {"1", "true", "yes", "on"}
-MONITOR_INTERVAL = 30                    # seconds between samples
+MONITOR_INTERVAL = 30                    # seconds between samples (kept in memory, costs almost nothing)
 # Where the status chart is posted (one message that is edited, not a new message every time).
 STATUS_GUILD_ID = _env_int("STATUS_GUILD_ID", 1568243245777944617)
 STATUS_CHANNEL_ID = _env_int("STATUS_CHANNEL_ID", 1568248329240842291)
 CHART_MINUTES = min(max(_env_int("CHART_MINUTES", 60), 10), 720)      # how far back the chart shows
-MONITOR_POST_EVERY = max(_env_int("MONITOR_POST_EVERY", 1), 1)        # refresh the chart every N samples
+MONITOR_POST_EVERY = max(_env_int("MONITOR_POST_EVERY", 4), 1)        # redraw + edit the chart every N samples (4 = every 2 min)
+MONITOR_WRITE_EVERY = max(_env_int("MONITOR_WRITE_EVERY", 10), 1)     # save samples to the database in one batch every N samples
 METRIC_RETENTION_HOURS = 24              # older samples are deleted from the database
+
+# --- Rotating bot status (cogs/status.py) -------------------------------------
+STATUS_INTERVAL = max(_env_int("STATUS_INTERVAL", 30), 5)              # seconds between presence changes (Discord allows 5 at the fastest)
+
+# --- Role swap rule (cogs/roleswap.py) ------------------------------------------
+# In this server: when a member LOSES the watch role the bot gives them the replacement role;
+# when that member later loses the replacement role, the bot gives the watch role back.
+ROLE_SWAP_GUILD_ID = _env_int("ROLE_SWAP_GUILD_ID", 1568243245777944617)
+ROLE_SWAP_WATCH_ROLE_ID = _env_int("ROLE_SWAP_WATCH_ROLE_ID", 1568515436343984288)
+ROLE_SWAP_GIVE_ROLE_ID = _env_int("ROLE_SWAP_GIVE_ROLE_ID", 1568489425074135151)
 
 # --- Invite command (cogs/invite.py) -----------------------------------------
 # Bot homepage shown on the /邀請 embed. Override with HOMEPAGE_URL in .env if it moves.

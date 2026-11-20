@@ -97,6 +97,12 @@ SCHEMA_STATEMENTS = [
         members INTEGER,
         PRIMARY KEY (ts, host)
     )""",
+    """CREATE TABLE IF NOT EXISTS role_swap_state (
+        guild_id INTEGER NOT NULL,
+        user_id  INTEGER NOT NULL,
+        state    TEXT    NOT NULL CHECK (state IN ('watch', 'swapped')),
+        PRIMARY KEY (guild_id, user_id)
+    )""",
     """CREATE TABLE IF NOT EXISTS autorole_settings (
         guild_id INTEGER PRIMARY KEY REFERENCES guild_settings(guild_id) ON DELETE CASCADE,
         enabled  INTEGER NOT NULL DEFAULT 0,
@@ -451,7 +457,7 @@ async def peek_settings(kind: str, guild_id: int) -> Optional[dict[str, Any]]:
 async def delete_guild_data(guild_id: int) -> None:
     """Remove everything stored for a server (settings, management list)."""
     tables = ("access_list", "welcome_settings", "leave_settings", "autorole_settings", "autorole_roles", "custom_backgrounds",
-              "guild_settings")
+              "role_swap_state", "guild_settings")
     await _backend.run([(f"DELETE FROM {table} WHERE guild_id = ?", (guild_id,)) for table in tables])
     for key in [key for key in _cache if key[1] == guild_id]:
         _cache.pop(key, None)
@@ -606,3 +612,33 @@ async def load_metrics(since_ts: int) -> list[dict]:
 
 async def prune_metrics(before_ts: int) -> None:
     await _backend.run([("DELETE FROM bot_metrics WHERE ts < ?", (before_ts,))])
+
+
+async def add_metrics(rows: list[dict]) -> None:
+    """Save several samples in ONE request (one round trip instead of one per sample)."""
+    if not rows:
+        return
+    await _backend.run([("INSERT OR REPLACE INTO bot_metrics (ts, host, latency, memory, cpu, guilds, members) "
+                         "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                         (r["ts"], r["host"], r["latency"], r["memory"], r["cpu"], r["guilds"], r["members"]))
+                        for r in rows])
+
+
+# ------------------------------------------------------------ role swap (cogs/roleswap.py)
+async def load_role_swap(guild_id: int) -> dict[int, str]:
+    """{user_id: 'watch' | 'swapped'} for one server."""
+    rows = (await _backend.run([("SELECT user_id, state FROM role_swap_state WHERE guild_id = ?", (guild_id,))]))[0]
+    return {row["user_id"]: row["state"] for row in rows}
+
+
+async def save_role_swap(guild_id: int, changes: dict[int, Optional[str]]) -> None:
+    """Apply many changes at once. A state of None deletes the member's row."""
+    statements: list[Statement] = []
+    for user_id, state in changes.items():
+        if state is None:
+            statements.append(("DELETE FROM role_swap_state WHERE guild_id = ? AND user_id = ?", (guild_id, user_id)))
+        else:
+            statements.append(("INSERT OR REPLACE INTO role_swap_state (guild_id, user_id, state) VALUES (?, ?, ?)",
+                               (guild_id, user_id, state)))
+    for start in range(0, len(statements), 100):          # keep each request a sensible size
+        await _backend.run(statements[start:start + 100])

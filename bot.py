@@ -21,21 +21,24 @@ import busywork
 import database
 import ha
 import webapp
-from utils import remote
+from utils import cmdsync, remote
 from utils.access import AccessCheckFailed, NotAuthorized, NotBotOwner, NotOwnerOrAdmin
 
 log = logging.getLogger("welcomebot")
 
+# Load order = the order the slash commands are registered: everyday commands first,
+# the back office last. (Cogs without commands can go anywhere.)
 EXTENSIONS = (
-    "cogs.welcome",
-    "cogs.leave",
-    "cogs.autorole",
-    "cogs.settings",
-    "cogs.access",
-    "cogs.backend",
+    "cogs.invite",       # /邀請
+    "cogs.welcome",      # /歡迎
+    "cogs.leave",        # /離開
+    "cogs.autorole",     # /自動身分組
+    "cogs.settings",     # /設定
+    "cogs.access",       # /管理員
     "cogs.monitor",
     "cogs.status",
-    "cogs.invite",
+    "cogs.roleswap",
+    "cogs.backend",      # /後臺 (always last)
 )
 
 
@@ -105,11 +108,11 @@ class WelcomeBot(commands.Bot):
             await self.load_extension(extension)
         if config.SYNC_COMMANDS:
             try:
-                synced = await self.tree.sync()
-                log.info("Synced %d slash commands", len(synced))
-                if config.ADMIN_GUILD_ID:
-                    guild_synced = await self.tree.sync(guild=discord.Object(id=config.ADMIN_GUILD_ID))
-                    log.info("Synced %d back office commands to the admin server", len(guild_synced))
+                count, synced = await cmdsync.sync(self)
+                if synced:
+                    log.info("Synced %d slash commands", count)
+                else:
+                    log.info("Slash commands unchanged, sync skipped")
             except discord.HTTPException:
                 log.exception("Slash command sync failed; existing commands stay available")
 
