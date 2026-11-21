@@ -1,4 +1,4 @@
-"""/設定: opens the settings panel (an embed with buttons, menus and pop-up forms).
+"""/設定: opens the settings panel (one box with the buttons next to each setting, menus and pop-up forms).
 
 Everything the bot can be configured with lives in the panel (see panels/): welcome, leave,
 auto roles, who may use the panel, and the back office for the bot owner.
@@ -21,7 +21,7 @@ class SettingsCog(commands.Cog, name="Settings"):
     async def settings(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
         view = await HomeView.create(self.bot, interaction)
-        await interaction.edit_original_response(embed=view.embed, view=view)
+        await interaction.edit_original_response(view=view)
 
 
 async def setup(bot: commands.Bot) -> None:

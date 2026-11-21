@@ -41,19 +41,14 @@ def build_invite(bot: commands.Bot) -> tuple[discord.Embed, discord.ui.View]:
     if avatar:
         embed.set_thumbnail(url=avatar)
 
-    embed.add_field(name="🖼️  歡迎圖片", value="黑白簡約線條\n四種色系可選", inline=True)
-    embed.add_field(name="💬  歡迎 / 離開", value="頻道、私訊\n或兩者同時", inline=True)
-    embed.add_field(name="🏷️  自動身分組", value="新成員加入\n自動發放", inline=True)
-    embed.add_field(
-        name="\u200b",
-        value=f"**[➜ 邀請機器人]({url})**　·　**[機器人首頁]({config.HOMEPAGE_URL})**",
-        inline=False)
-    embed.set_footer(text=f"{config.VERSION}　·　所有指令皆為中文，輸入 / 即可查看")
+    embed.add_field(name="歡迎圖片", value="黑白簡約線條\n四種色系可選", inline=True)
+    embed.add_field(name="歡迎 / 離開", value="頻道、私訊\n或兩者同時", inline=True)
+    embed.add_field(name="自動身分組", value="新成員加入\n自動發放", inline=True)
+    embed.set_footer(text=f"{config.VERSION}　·　在下方按鈕邀請機器人，或輸入 /設定 開始設定")
 
     view = discord.ui.View(timeout=None)          # link buttons need no callbacks, so no state to keep
-    view.add_item(discord.ui.Button(label="邀請機器人", emoji="➕", style=discord.ButtonStyle.link, url=url))
-    view.add_item(discord.ui.Button(label="機器人首頁", emoji="🏠", style=discord.ButtonStyle.link,
-                                    url=config.HOMEPAGE_URL))
+    view.add_item(discord.ui.Button(label="邀請機器人", style=discord.ButtonStyle.link, url=url))
+    view.add_item(discord.ui.Button(label="機器人首頁", style=discord.ButtonStyle.link, url=config.HOMEPAGE_URL))
     return embed, view
 
 
@@ -84,7 +79,7 @@ class InviteCog(commands.Cog, name="Invite"):
             await channel.send(embed=embed, view=view, allowed_mentions=discord.AllowedMentions.none())
         except discord.HTTPException as exc:
             log.warning("Could not post the invite in channel %s: %s", getattr(channel, "id", None), exc)
-            await interaction.followup.send("❌ 發送失敗，請檢查機器人在這個頻道的權限。", ephemeral=True)
+            await interaction.followup.send("發送失敗，請檢查機器人在這個頻道的權限。", ephemeral=True)
             return
 
         try:

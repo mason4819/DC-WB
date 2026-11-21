@@ -2,7 +2,7 @@
 import discord
 
 import database
-from panels.base import PanelView, go_home, make_embed, reject
+from panels.base import DANGER, SUCCESS, PanelView, go_home, make_button, on_off, reject
 from utils.messaging import get_bot_member, role_problem
 
 
@@ -26,27 +26,28 @@ class AutoRoleView(PanelView):
         guild = opener.guild
         view.settings = s = await database.get_settings("autorole", opener.guild_id)
         view.role_ids = ids = await database.get_autoroles(opener.guild_id)
-        embed = make_embed("🏷️ 自動身分組", "✅ 已啟用" if s["enabled"] else "❌ 已停用")
-        embed.add_field(name=f"身分組（{len(ids)}/{database.MAX_AUTOROLES}）", inline=False, value=(
-            "\n".join(f"• {guild.get_role(i).mention}" if guild.get_role(i) else f"• （已不存在）`{i}`" for i in ids)
-            or "尚未選擇。用下面的選單挑出新成員加入時要自動取得的身分組。"))
+        view.heading("自動身分組", "新成員加入時自動取得的身分組")
+        view.divider()
+        view.item("狀態", on_off(s["enabled"]), "停用" if s["enabled"] else "啟用", view._toggle,
+                  style=DANGER if s["enabled"] else SUCCESS)
+        listing = "\n".join(f"- {guild.get_role(i).mention}" if guild.get_role(i) else f"- 已不存在 `{i}`" for i in ids)
+        view.item(f"身分組（{len(ids)}/{database.MAX_AUTOROLES}）", listing or "尚未選擇", "清空名單", view._clear,
+                  disabled=not ids)
+        view.divider()
+
+        existing = [guild.get_role(i) for i in ids if guild.get_role(i) is not None]
+        view.menu = discord.ui.RoleSelect(placeholder="選擇新成員自動取得的身分組", min_values=0,
+                                          max_values=database.MAX_AUTOROLES, default_values=existing)
+        view.menu.callback = view._pick
+        view.select(view.menu)
+        view.divider()
+        view.buttons(make_button("返回", view._back))
+
         problems = await role_problems(bot, guild, ids) if ids else []
         if s["enabled"] and not ids:
             problems.append("已啟用但清單是空的，請先選擇身分組。")
-        if problems:
-            embed.add_field(name="⚠️ 提醒", value="\n".join(f"• {p}" for p in problems)[:1000], inline=False)
-        view.embed = embed
-
-        existing = [guild.get_role(i) for i in ids if guild.get_role(i) is not None]
-        menu = discord.ui.RoleSelect(placeholder="選擇新成員自動取得的身分組", min_values=0,
-                                     max_values=database.MAX_AUTOROLES, row=0, default_values=existing)
-        menu.callback = view._pick
-        view.menu = menu
-        view.add_item(menu)
-        view.add_button("停用" if s["enabled"] else "啟用", view._toggle, row=1,
-                        style=discord.ButtonStyle.danger if s["enabled"] else discord.ButtonStyle.success)
-        view.add_button("清空名單", view._clear, row=1, disabled=not ids)
-        view.add_button("返回", view._back, row=1, emoji="↩️")
+        view.notes(problems)
+        view.footer()
         return view
 
     async def _pick(self, interaction: discord.Interaction) -> None:
@@ -62,7 +63,7 @@ class AutoRoleView(PanelView):
 
     async def _toggle(self, interaction: discord.Interaction) -> None:
         if not self.settings["enabled"] and not self.role_ids:
-            await reject(interaction, "❌ 還沒有選擇身分組，請先用選單挑出要自動發放的身分組。")
+            await reject(interaction, "還沒有選擇身分組，請先用選單挑出要自動發放的身分組。")
             return
         await interaction.response.defer()
         await database.update_settings("autorole", interaction.guild_id, enabled=0 if self.settings["enabled"] else 1)

@@ -7,7 +7,7 @@ import discord
 
 import config
 import database
-from panels.base import PanelModal, PanelView, go_home, make_embed, reject, show
+from panels.base import (DANGER, PRIMARY, SUCCESS, PanelModal, PanelView, go_home, make_button, on_off, reject, show)
 from panels.common import MessageModal, message_field, style_label
 from utils import assets_store
 from utils import image as imaging
@@ -28,69 +28,52 @@ def background_label(settings: dict) -> str:
 class WelcomeView(PanelView):
     @classmethod
     async def create(cls, bot, opener: discord.Interaction) -> "WelcomeView":
-        view = cls(bot, opener)
-        view.settings = await database.get_settings("welcome", opener.guild_id)
-        view.embed = await view._build_embed()
-        view._build_items()
-        return view
+        s = await database.get_settings("welcome", opener.guild_id)
+        view = cls(bot, opener, accent=imaging.theme_embed_colour(s["theme"]))
+        view.settings = s
+        guild = opener.guild
 
-    async def _build_embed(self) -> discord.Embed:
-        s, guild = self.settings, self.opener.guild
-        embed = make_embed("🎉 歡迎系統", "✅ 已啟用" if s["enabled"] else "❌ 已停用")
-        embed.colour = imaging.theme_embed_colour(s["theme"])
-        embed.add_field(name="發送方式", value=DELIVERY_LABELS[s["delivery"]])
-        embed.add_field(name="頻道", value=f"<#{s['channel_id']}>" if s["channel_id"] else "尚未設定")
-        embed.add_field(name="訊息樣式", value=style_label(s["use_embed"]))
-        embed.add_field(name="歡迎圖片", value=("開啟" if s["image_enabled"] else "關閉") +
-                        f"・{imaging.get_theme(s['theme'])['label']}・{background_label(s)}", inline=False)
-        embed.add_field(name="訊息內容", value=message_field(s["message"]), inline=False)
+        view.heading("歡迎系統", "新成員加入時發送歡迎訊息")
+        view.divider()
+        view.item("狀態", on_off(s["enabled"]), "停用" if s["enabled"] else "啟用", view._toggle("enabled"),
+                  style=DANGER if s["enabled"] else SUCCESS)
+        view.item("訊息樣式", style_label(s["use_embed"]), "切換樣式", view._toggle("use_embed"))
+        view.item("歡迎圖片", ("開啟" if s["image_enabled"] else "關閉") +
+                  f"・{imaging.get_theme(s['theme'])['label']}・{background_label(s)}",
+                  "關閉圖片" if s["image_enabled"] else "開啟圖片", view._toggle("image_enabled"))
+        view.item("訊息內容", message_field(s["message"]), "編輯", view._edit_message, style=PRIMARY)
+        view.divider()
+
+        channel = guild.get_channel(s["channel_id"]) if s["channel_id"] else None
+        view.channel_menu = discord.ui.ChannelSelect(channel_types=TEXT_CHANNELS, placeholder="選擇歡迎頻道",
+                                                     default_values=[channel] if channel is not None else [])
+        view.channel_menu.callback = view._pick_channel
+        view.select(view.channel_menu)
+        view.delivery_menu = discord.ui.Select(placeholder="發送方式", options=[
+            discord.SelectOption(label=label, value=key, default=key == s["delivery"])
+            for key, label in DELIVERY_LABELS.items()])
+        view.delivery_menu.callback = view._pick_delivery
+        view.select(view.delivery_menu)
+        view.theme_menu = discord.ui.Select(placeholder="圖片主題", options=[
+            discord.SelectOption(label=info["label"], value=key, default=key == s["theme"])
+            for key, info in imaging.THEMES.items()])
+        view.theme_menu.callback = view._pick_theme
+        view.select(view.theme_menu)
+        view.divider()
+        view.buttons(make_button("背景", view._background), make_button("預覽", view._preview),
+                     make_button("測試", view._test), make_button("返回", view._back))
 
         notes: list[str] = []
         if s["delivery"] in ("channel", "both"):
             if not s["channel_id"]:
                 notes.append("還沒有選擇歡迎頻道，頻道這部分不會發送。")
             else:
-                notes += await channel_warnings(self.bot, guild.get_channel(s["channel_id"]),
-                                                embeds=bool(s["use_embed"]), files=bool(s["image_enabled"]))
+                notes += await channel_warnings(bot, channel, embeds=bool(s["use_embed"]), files=bool(s["image_enabled"]))
         if s["delivery"] in ("dm", "both"):
             notes.append("私訊：成員可以關閉「允許伺服器成員私訊」，這時私訊會失敗，不影響其他功能。")
-        if notes:
-            embed.add_field(name="⚠️ 提醒", value="\n".join(f"• {n}" for n in notes)[:1000], inline=False)
-        return embed
-
-    def _build_items(self) -> None:
-        s, guild = self.settings, self.opener.guild
-        self.add_button("停用" if s["enabled"] else "啟用", self._toggle("enabled"), row=0,
-                        style=discord.ButtonStyle.danger if s["enabled"] else discord.ButtonStyle.success)
-        self.add_button("改成純文字" if s["use_embed"] else "改成嵌入式", self._toggle("use_embed"), row=0)
-        self.add_button("關閉圖片" if s["image_enabled"] else "開啟圖片", self._toggle("image_enabled"), row=0)
-        self.add_button("編輯訊息內容", self._edit_message, row=0, emoji="✏️", style=discord.ButtonStyle.primary)
-
-        channel = guild.get_channel(s["channel_id"]) if s["channel_id"] else None
-        menu = discord.ui.ChannelSelect(channel_types=TEXT_CHANNELS, placeholder="選擇歡迎頻道", row=1,
-                                        default_values=[channel] if channel is not None else [])
-        menu.callback = self._pick_channel
-        self.channel_menu = menu
-        self.add_item(menu)
-
-        delivery = discord.ui.Select(placeholder="發送方式", row=2, options=[
-            discord.SelectOption(label=label, value=key, default=key == s["delivery"])
-            for key, label in DELIVERY_LABELS.items()])
-        delivery.callback = self._pick_delivery
-        self.delivery_menu = delivery
-        self.add_item(delivery)
-
-        theme = discord.ui.Select(placeholder="圖片主題", row=3, options=[
-            discord.SelectOption(label=info["label"], value=key, default=key == s["theme"])
-            for key, info in imaging.THEMES.items()])
-        theme.callback = self._pick_theme
-        self.theme_menu = theme
-        self.add_item(theme)
-
-        self.add_button("背景", self._background, row=4, emoji="🖼️")
-        self.add_button("預覽", self._preview, row=4, emoji="👁️")
-        self.add_button("測試", self._test, row=4, emoji="🧪")
-        self.add_button("返回", self._back, row=4, emoji="↩️")
+        view.notes(notes)
+        view.footer()
+        return view
 
     # --------------------------------------------------------------- callbacks
     def _toggle(self, field: str):
@@ -100,20 +83,19 @@ class WelcomeView(PanelView):
             await self.go(interaction, await WelcomeView.create(self.bot, self.opener))
         return callback
 
-    async def _pick_channel(self, interaction: discord.Interaction) -> None:
+    async def _save_and_redraw(self, interaction: discord.Interaction, **changes) -> None:
         await interaction.response.defer()
-        await database.update_settings("welcome", interaction.guild_id, channel_id=self.channel_menu.values[0].id)
+        await database.update_settings("welcome", interaction.guild_id, **changes)
         await self.go(interaction, await WelcomeView.create(self.bot, self.opener))
+
+    async def _pick_channel(self, interaction: discord.Interaction) -> None:
+        await self._save_and_redraw(interaction, channel_id=self.channel_menu.values[0].id)
 
     async def _pick_delivery(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer()
-        await database.update_settings("welcome", interaction.guild_id, delivery=self.delivery_menu.values[0])
-        await self.go(interaction, await WelcomeView.create(self.bot, self.opener))
+        await self._save_and_redraw(interaction, delivery=self.delivery_menu.values[0])
 
     async def _pick_theme(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer()
-        await database.update_settings("welcome", interaction.guild_id, theme=self.theme_menu.values[0])
-        await self.go(interaction, await WelcomeView.create(self.bot, self.opener))
+        await self._save_and_redraw(interaction, theme=self.theme_menu.values[0])
 
     async def _edit_message(self, interaction: discord.Interaction) -> None:
         async def rebuild() -> PanelView:
@@ -122,6 +104,7 @@ class WelcomeView(PanelView):
         await interaction.response.send_modal(MessageModal("welcome", "編輯歡迎訊息", self.settings["message"], rebuild))
 
     async def _background(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
         await self.go(interaction, await BackgroundView.create(self.bot, self.opener))
 
     async def _back(self, interaction: discord.Interaction) -> None:
@@ -145,18 +128,18 @@ class WelcomeView(PanelView):
         cog = self.bot.get_cog("Welcome")
         settings = await database.get_settings("welcome", interaction.guild_id)
         if settings["delivery"] == "channel" and not settings["channel_id"]:
-            await reject(interaction, "❌ 還沒有選擇歡迎頻道，請先在面板上選一個頻道。")
+            await reject(interaction, "還沒有選擇歡迎頻道，請先在面板上選一個頻道。")
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         results = await cog.send_welcome(interaction.user, settings)
         if not results:
-            await interaction.followup.send("❌ 沒有可以發送的地方，請先選擇頻道，或把發送方式改成私訊。", ephemeral=True)
+            await interaction.followup.send("沒有可以發送的地方，請先選擇頻道，或把發送方式改成私訊。", ephemeral=True)
             return
         lines: list[str] = []
         for target, (sent, notes) in results.items():
             name = f"頻道 <#{settings['channel_id']}>" if target == "channel" else "私訊（發給你自己）"
-            lines.append(f"{'✅' if sent else '❌'} {name}：{'已發送' if sent else '發送失敗'}")
-            lines.extend(f"⚠️ {note}" for note in notes)
+            lines.append(f"{name}：{'已發送' if sent else '發送失敗'}")
+            lines.extend(f"注意：{note}" for note in notes)
         await interaction.followup.send("\n".join(lines), ephemeral=True)
 
 
@@ -175,10 +158,10 @@ class BackgroundUploadModal(PanelModal):
         attachment = self.upload.values[0]
         content_type = (attachment.content_type or "").lower()
         if not (content_type in {"image/png", "image/jpeg"} or attachment.filename.lower().endswith((".png", ".jpg", ".jpeg"))):
-            await reject(interaction, "❌ 請上傳 PNG 或 JPG 圖片。")
+            await reject(interaction, "請上傳 PNG 或 JPG 圖片。")
             return
         if attachment.size > config.MAX_BACKGROUND_BYTES:
-            await reject(interaction, f"❌ 圖片超過 {config.MAX_BACKGROUND_BYTES // 1024 // 1024}MB。")
+            await reject(interaction, f"圖片超過 {config.MAX_BACKGROUND_BYTES // 1024 // 1024}MB。")
             return
         await interaction.response.defer()
         guild_id = interaction.guild_id
@@ -190,10 +173,10 @@ class BackgroundUploadModal(PanelModal):
             version = await database.save_background(guild_id, processed)
             assets_store.cache_background(guild_id, version, processed)
         except imaging.BackgroundError as exc:
-            await interaction.followup.send(f"❌ {exc}", ephemeral=True)
+            await interaction.followup.send(str(exc), ephemeral=True)
             return
         except discord.HTTPException:
-            await interaction.followup.send("❌ 無法下載附件，請稍後再試。", ephemeral=True)
+            await interaction.followup.send("無法下載附件，請稍後再試。", ephemeral=True)
             return
         except OSError:
             log.warning("Could not cache the new background for guild %s", guild_id, exc_info=True)
@@ -208,34 +191,36 @@ class BackgroundView(PanelView):
         view = cls(bot, opener)
         view.settings = await database.get_settings("welcome", opener.guild_id)
         path = view.settings["background_path"]
-        view.embed = make_embed("🖼️ 歡迎圖片背景", f"目前使用：**{background_label(view.settings)}**")
-        view.embed.add_field(name="說明", inline=False, value=(
-            "• **純色**：簡約線條，不需要圖片\n• **預設橫幅**：機器人內建的黑白橫幅\n"
-            f"• **上傳自訂圖片**：PNG 或 JPG，{config.MAX_BACKGROUND_BYTES // 1024 // 1024}MB 以內，會轉成黑白"))
-        view.add_button("純色", view._set_plain, row=0, disabled=path is None)
-        view.add_button("預設橫幅", view._set_banner, row=0, disabled=path == "builtin")
-        view.add_button("上傳自訂圖片", view._upload, row=0, style=discord.ButtonStyle.primary, emoji="📤")
-        view.add_button("返回歡迎設定", view._back, row=1, emoji="↩️")
+        view.heading("歡迎圖片背景", f"目前使用：{background_label(view.settings)}")
+        view.divider()
+        view.item("純色", "簡約線條，不需要圖片", "使用", view._set_plain, disabled=path is None)
+        view.item("預設橫幅", "機器人內建的黑白橫幅", "使用", view._set_banner, disabled=path == "builtin")
+        view.item("自訂圖片", f"PNG 或 JPG，{config.MAX_BACKGROUND_BYTES // 1024 // 1024}MB 以內，會轉成黑白",
+                  "上傳", view._upload, style=PRIMARY)
+        view.divider()
+        view.buttons(make_button("返回歡迎設定", view._back))
+        view.footer()
         return view
 
     async def _drop_custom(self, guild_id: int) -> None:
         await database.delete_background(guild_id)
         assets_store.drop_background_cache(guild_id)
 
-    async def _set_plain(self, interaction: discord.Interaction) -> None:
+    async def _set(self, interaction: discord.Interaction, path) -> None:
         await interaction.response.defer()
         await self._drop_custom(interaction.guild_id)
-        await database.update_settings("welcome", interaction.guild_id, background_path=None)
+        await database.update_settings("welcome", interaction.guild_id, background_path=path)
         await self.go(interaction, await BackgroundView.create(self.bot, self.opener))
 
+    async def _set_plain(self, interaction: discord.Interaction) -> None:
+        await self._set(interaction, None)
+
     async def _set_banner(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer()
-        await self._drop_custom(interaction.guild_id)
-        await database.update_settings("welcome", interaction.guild_id, background_path="builtin")
-        await self.go(interaction, await BackgroundView.create(self.bot, self.opener))
+        await self._set(interaction, "builtin")
 
     async def _upload(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(BackgroundUploadModal(self))
 
     async def _back(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
         await self.go(interaction, await WelcomeView.create(self.bot, self.opener))

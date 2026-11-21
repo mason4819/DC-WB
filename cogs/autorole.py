@@ -82,7 +82,7 @@ class AutoRoleCog(commands.Cog, name="AutoRole"):
         if channel is None:
             return
         try:
-            await channel.send(f"⚠️ **自動身分組發生問題：**{text}\n"
+            await channel.send(f"**自動身分組發生問題：**{text}\n"
                                "*（這則提醒給管理員看，每 6 小時最多出現一次。）*",
                                allowed_mentions=discord.AllowedMentions.none())
         except discord.HTTPException:

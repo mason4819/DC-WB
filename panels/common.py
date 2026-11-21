@@ -15,7 +15,7 @@ def style_label(use_embed) -> str:
 
 def message_field(message: str) -> str:
     text = message.replace("`", "ˋ")
-    return f"```{text if len(text) <= 900 else text[:899] + '…'}```"
+    return f"```{text if len(text) <= 700 else text[:699] + '…'}```"
 
 
 class MessageModal(PanelModal):
@@ -33,7 +33,7 @@ class MessageModal(PanelModal):
     async def on_submit(self, interaction: discord.Interaction) -> None:
         text = clean_template(self.text.value)
         if not text:
-            await reject(interaction, "❌ 訊息內容不能是空的。")
+            await reject(interaction, "訊息內容不能是空的。")
             return
         await interaction.response.defer()
         await database.update_settings(self.kind, interaction.guild_id, message=text)
