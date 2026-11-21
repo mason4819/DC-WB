@@ -2,7 +2,7 @@
 
 Syncing is a set of API calls that Discord rate limits, and with two hosts taking turns the bot
 restarts often. A fingerprint of the command definitions is kept in the database, so a start
-with unchanged commands makes no sync call at all. /後臺 同步指令 always syncs.
+with unchanged commands makes no sync call at all. The back office button 同步指令 always syncs.
 """
 import hashlib
 import json

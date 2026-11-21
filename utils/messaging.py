@@ -1,58 +1,14 @@
-"""Shared Discord helpers: permission checks, safe message delivery, command group."""
+"""Shared Discord helpers: permission checks and safe message delivery."""
 import io
 import logging
 from typing import Awaitable, Callable, Optional
 
 import discord
-from discord import app_commands
 from discord.ext import commands
 
 from utils import assets_store
-from utils.access import NotOwnerOrAdmin, is_owner_or_admin, require_authorized
 
 log = logging.getLogger(__name__)
-
-STYLE_CHOICES = [
-    app_commands.Choice(name="嵌入式訊息 (Embed)", value="embed"),
-    app_commands.Choice(name="純文字", value="text"),
-]
-
-
-class AdminGroup(app_commands.Group):
-    """Setup command group. Who may use it is decided by utils/access.py.
-
-    The group is visible to everyone in Discord's command list and the bot checks the
-    rule itself, so members added to the management list can use it without needing
-    the Manage Server permission. (Server owners can still hide or limit a command in
-    Server Settings > Integrations.)
-    """
-
-    def __init__(self, *, name: str, description: str) -> None:
-        super().__init__(name=name, description=description, guild_only=True)
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await require_authorized(interaction)
-
-
-class OwnerGroup(app_commands.Group):
-    """Group reserved for the server owner and Administrators (editing the management list)."""
-
-    def __init__(self, *, name: str, description: str) -> None:
-        super().__init__(name=name, description=description, guild_only=True,
-                         default_permissions=discord.Permissions(administrator=True))
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if is_owner_or_admin(interaction):
-            return True
-        raise NotOwnerOrAdmin()
-
-
-async def reply(interaction: discord.Interaction, text: str) -> None:
-    """Send an ephemeral reply, whether or not the interaction was already deferred."""
-    if interaction.response.is_done():
-        await interaction.followup.send(text, ephemeral=True)
-    else:
-        await interaction.response.send_message(text, ephemeral=True)
 
 
 async def get_bot_member(bot: commands.Bot, guild: discord.Guild) -> Optional[discord.Member]:

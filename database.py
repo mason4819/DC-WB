@@ -434,6 +434,18 @@ async def remove_access(guild_id: int, kind: str, target_id: int) -> bool:
     return True
 
 
+async def set_access(guild_id: int, kind: str, target_ids: list[int]) -> None:
+    """Replace the whole list of members or roles of one kind (used by the settings panel)."""
+    unique = list(dict.fromkeys(target_ids))[:MAX_ACCESS_ENTRIES]
+    statements = [("INSERT OR IGNORE INTO guild_settings (guild_id) VALUES (?)", (guild_id,)),
+                  ("DELETE FROM access_list WHERE guild_id = ? AND kind = ?", (guild_id, kind))]
+    statements += [("INSERT INTO access_list (guild_id, kind, target_id) VALUES (?, ?, ?)", (guild_id, kind, tid))
+                   for tid in unique]
+    await _backend.run(statements)
+    current = await get_access(guild_id)
+    _cache[("access", guild_id)] = {**current, kind: unique}
+
+
 async def clear_access(guild_id: int) -> None:
     """Empty the list, which returns the server to the default rule (Manage Server)."""
     await _backend.run([("DELETE FROM access_list WHERE guild_id = ?", (guild_id,))])

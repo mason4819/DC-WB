@@ -1,16 +1,19 @@
-"""Who may use the setup commands.
+"""Who may open the /設定 panel, and who may use the back office inside it.
 
-Rule for /歡迎, /離開, /自動身分組 and /設定:
+Rule for the /設定 panel (and every page in it):
   - The server owner and members with Administrator always may.
   - If the server has NOT set up a management list, members with Manage Server may too.
   - If the server HAS a management list (/管理員), only the owner, Administrators, listed
     members and members holding a listed role may. Manage Server alone is then not enough.
-/管理員 itself (editing the list) is limited to the owner and Administrators, so a listed
+Editing that list (the 權限名單 page) is limited to the owner and Administrators, so a listed
 member cannot add more people.
+
+The back office page is a separate rule: only the user IDs in the OWNER_IDS environment variable.
 """
 import discord
 from discord import app_commands
 
+import config
 import database
 
 
@@ -22,12 +25,13 @@ class NotOwnerOrAdmin(NotAuthorized):
     """The command is reserved for the owner and Administrators."""
 
 
-class NotBotOwner(NotAuthorized):
-    """The command is reserved for the owner of the bot (not of a server)."""
-
-
 class AccessCheckFailed(app_commands.CheckFailure):
     """The permission list could not be read (for example the database is unreachable)."""
+
+
+def is_bot_owner(user_id: int) -> bool:
+    """True only for the user IDs listed in OWNER_IDS (nobody if it is empty)."""
+    return user_id in config.OWNER_IDS
 
 
 def is_owner_or_admin(interaction: discord.Interaction) -> bool:

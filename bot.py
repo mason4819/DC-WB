@@ -22,23 +22,23 @@ import database
 import ha
 import webapp
 from utils import cmdsync, remote
-from utils.access import AccessCheckFailed, NotAuthorized, NotBotOwner, NotOwnerOrAdmin
+from utils.access import AccessCheckFailed, NotAuthorized, NotOwnerOrAdmin
 
 log = logging.getLogger("welcomebot")
 
-# Load order = the order the slash commands are registered: everyday commands first,
-# the back office last. (Cogs without commands can go anywhere.)
+# Load order = the order the slash commands are registered. The bot has only two commands:
+# /設定 (the settings panel, which also holds the back office) and /邀請. Cogs without commands
+# can go anywhere.
 EXTENSIONS = (
-    "cogs.invite",       # /邀請
-    "cogs.welcome",      # /歡迎
-    "cogs.leave",        # /離開
-    "cogs.autorole",     # /自動身分組
     "cogs.settings",     # /設定
-    "cogs.access",       # /管理員
+    "cogs.invite",       # /邀請
+    "cogs.welcome",
+    "cogs.leave",
+    "cogs.autorole",
     "cogs.monitor",
     "cogs.status",
     "cogs.roleswap",
-    "cogs.backend",      # /後臺 (always last)
+    "cogs.guildguard",
 )
 
 
@@ -47,12 +47,10 @@ class BotTree(app_commands.CommandTree):
 
     async def on_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
         command_name = interaction.command.qualified_name if interaction.command else "unknown"
-        if isinstance(error, NotBotOwner):
-            text = "只有機器人的擁有者可以使用後臺指令。"
-        elif isinstance(error, NotOwnerOrAdmin):
+        if isinstance(error, NotOwnerOrAdmin):
             text = "這個指令只有伺服器擁有者或管理員（Administrator）可以使用。"
         elif isinstance(error, NotAuthorized):
-            text = ("你沒有權限使用這個指令。\n只有伺服器擁有者、管理員，以及被加入管理名單的成員或身分組可以使用"
+            text = ("你沒有權限使用設定面板。\n只有伺服器擁有者、管理員，以及被加入權限名單的成員或身分組可以使用"
                     "（如果伺服器沒有設定名單，則需要「管理伺服器」權限）。")
         elif isinstance(error, AccessCheckFailed):
             log.error("Could not read the access list", exc_info=error.__cause__)

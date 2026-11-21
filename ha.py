@@ -23,7 +23,7 @@ from utils import remote
 
 log = logging.getLogger(__name__)
 
-active_supervisor: Optional["Supervisor"] = None   # set by bot.py so /後臺 can ask for a handover
+active_supervisor: Optional["Supervisor"] = None   # set by bot.py so the back office can ask for a handover
 
 LEASE_TTL = 45
 CHECK_INTERVAL = 10
@@ -32,7 +32,7 @@ CRASH_COOLDOWN = 30
 PEER_DOWN_INTERVAL = 60      # the other host is not answering: look again every minute
 PEER_UP_INTERVAL = 300       # both hosts are up: every 5 minutes (well under Render's 15 minute idle limit)
 
-# What this host last learned about the other one. Shown by /status and /後臺 狀態.
+# What this host last learned about the other one. Shown by /status and the back office.
 peer: dict = {"up": None, "since": None, "checked": None, "name": None, "role": None}   # times are unix seconds
 
 

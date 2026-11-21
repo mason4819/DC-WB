@@ -15,7 +15,7 @@ load_dotenv(BASE_DIR / ".env")
 
 # Version: the whole number is bumped for important updates, the decimal for small ones (V2.1 -> V2.2 -> V3.0).
 # This is the only place to change it; see CHANGELOG.md.
-VERSION = "V1.1"
+VERSION = "V3.0"
 
 STARTED_AT = time.time()  # roughly when this process started (for the uptime display)
 
@@ -51,10 +51,11 @@ def _int_list(name: str) -> list[int]:
     return [int(part) for part in re.split(r"[,\s]+", os.getenv(name, "")) if part.isdigit()]
 
 
-# Back office (/後臺): Discord user IDs allowed to use it. Leave empty to use the bot's
-# application owner (or team) from the Developer Portal. Set on every host.
+# Back office (the 後臺 button inside /設定): the Discord user IDs allowed to use it, separated by
+# commas or spaces. Only these IDs; if empty, nobody can use it. Set on every host.
 OWNER_IDS = _int_list("OWNER_IDS")
-# Optional: show the /後臺 commands only in this server instead of in every server.
+# Optional, only for cleaning up: older versions registered /後臺 in this one server. Set it once so
+# the next command sync also removes that leftover command there.
 ADMIN_GUILD_ID = next(iter(_int_list("ADMIN_GUILD_ID")), 0)
 
 # --- Two-host failover (Render <-> Wispbyte) --------------------------------

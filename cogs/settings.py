@@ -1,99 +1,27 @@
-"""/設定: one overview of every setting, including detected problems."""
+"""/設定: opens the settings panel (an embed with buttons, menus and pop-up forms).
+
+Everything the bot can be configured with lives in the panel (see panels/): welcome, leave,
+auto roles, who may use the panel, and the back office for the bot owner.
+"""
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-import config
-import database
-from utils import image as imaging
+from panels.home import HomeView
 from utils.access import require_authorized
-from cogs.welcome import DELIVERY_LABELS
-from utils.messaging import channel_warnings, get_bot_member, role_problem
-
-
-def _status(enabled: bool) -> str:
-    return "✅ 已啟用" if enabled else "❌ 已停用"
-
-
-def _channel_text(channel_id) -> str:
-    return f"<#{channel_id}>" if channel_id else "尚未設定"
-
-
-def _short(text: str, limit: int = 180) -> str:
-    return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
 class SettingsCog(commands.Cog, name="Settings"):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @app_commands.command(name="設定", description="查看歡迎、離開與自動身分組的所有設定")
+    @app_commands.command(name="設定", description="開啟設定面板：歡迎、離開、自動身分組、權限與後臺")
     @app_commands.guild_only()
     @app_commands.check(require_authorized)
-    async def show_config(self, interaction: discord.Interaction) -> None:
-        guild = interaction.guild
-        welcome = await database.get_settings("welcome", guild.id)
-        leave = await database.get_settings("leave", guild.id)
-        autorole = await database.get_settings("autorole", guild.id)
-        problems: list[str] = []
-
-        embed = discord.Embed(title=f"{guild.name} 的設定", colour=config.WELCOME_COLOR)
-
-        embed.add_field(
-            name="歡迎系統",
-            value=(f"{_status(welcome['enabled'])}\n發送方式：{DELIVERY_LABELS[welcome['delivery']]}\n"
-                   f"頻道：{_channel_text(welcome['channel_id'])}\n"
-                   f"樣式：{'嵌入式訊息' if welcome['use_embed'] else '純文字'}\n"
-                   f"圖片：{'開啟' if welcome['image_enabled'] else '關閉'}（{imaging.get_theme(welcome['theme'])['label']}）\n"
-                   f"內容：`{_short(welcome['message'])}`"),
-            inline=False)
-        if welcome["enabled"] and (welcome["delivery"] == "channel" or (welcome["delivery"] == "both" and welcome["channel_id"])):
-            problems += await channel_warnings(
-                self.bot, guild.get_channel(welcome["channel_id"]) if welcome["channel_id"] else None,
-                embeds=bool(welcome["use_embed"]), files=bool(welcome["image_enabled"]))
-
-        embed.add_field(
-            name="離開系統",
-            value=(f"{_status(leave['enabled'])}\n頻道：{_channel_text(leave['channel_id'])}\n"
-                   f"樣式：{'嵌入式訊息' if leave['use_embed'] else '純文字'}\n"
-                   f"內容：`{_short(leave['message'])}`"),
-            inline=False)
-        if leave["enabled"]:
-            problems += await channel_warnings(
-                self.bot, guild.get_channel(leave["channel_id"]) if leave["channel_id"] else None,
-                embeds=bool(leave["use_embed"]), files=False)
-
-        role_ids = await database.get_autoroles(guild.id)
-        mentions = [guild.get_role(i).mention if guild.get_role(i) else f"（已不存在）`{i}`" for i in role_ids]
-        embed.add_field(
-            name="自動身分組",
-            value=f"{_status(autorole['enabled'])}\n身分組（{len(role_ids)}/{database.MAX_AUTOROLES}）：{'、'.join(mentions) if mentions else '尚未設定'}",
-            inline=False)
-        if autorole["enabled"]:
-            if not role_ids:
-                problems.append("自動身分組已啟用但清單是空的，請用 `/自動身分組 新增` 加入身分組。")
-            me = await get_bot_member(self.bot, guild)
-            for role_id in role_ids:
-                role = guild.get_role(role_id)
-                if role is None:
-                    problems.append(f"自動身分組 `{role_id}` 已經不存在，請用 `/自動身分組 移除` 清理。")
-                elif me and (problem := role_problem(me, role)):
-                    problems.append(problem)
-
-        access = await database.get_access(guild.id)
-        if access["user"] or access["role"]:
-            rule = (f"限定名單：{len(access['user'])} 位成員、{len(access['role'])} 個身分組\n"
-                    "（另外擁有者與管理員永遠可以使用）")
-        else:
-            rule = "未設定名單：擁有「管理伺服器」或「管理員」權限即可使用"
-        embed.add_field(name="指令管理", value=rule, inline=False)
-
-        if problems:
-            embed.add_field(name="⚠️ 發現的問題", value="\n".join(f"• {p}" for p in problems)[:1000],
-                            inline=False)
-            embed.colour = config.WARNING_COLOR
-
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    async def settings(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        view = await HomeView.create(self.bot, interaction)
+        await interaction.edit_original_response(embed=view.embed, view=view)
 
 
 async def setup(bot: commands.Bot) -> None:
