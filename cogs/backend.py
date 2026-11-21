@@ -307,7 +307,7 @@ class BackendCog(commands.Cog, name="Backend"):
         guilds = self.bot.guilds
         memory = memory_mb()
 
-        embed = discord.Embed(title=f"後臺狀態 · {config.NODE_NAME}", colour=config.WELCOME_COLOR)
+        embed = discord.Embed(title=f"後臺狀態 · {config.NODE_NAME} · {config.VERSION}", colour=config.WELCOME_COLOR)
         role = {"leader": "🟢 使用中（連線 Discord）", "standby": "🟡 備用"}.get(supervisor.role if supervisor else "", "單機模式")
         lease_text = "—"
         try:

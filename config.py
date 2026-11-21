@@ -13,6 +13,10 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
+# Version: the whole number is bumped for important updates, the decimal for small ones (V2.1 -> V2.2 -> V3.0).
+# This is the only place to change it; see CHANGELOG.md.
+VERSION = "V1.1"
+
 STARTED_AT = time.time()  # roughly when this process started (for the uptime display)
 
 # --- Environment -----------------------------------------------------------

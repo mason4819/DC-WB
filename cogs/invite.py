@@ -48,7 +48,7 @@ def build_invite(bot: commands.Bot) -> tuple[discord.Embed, discord.ui.View]:
         name="\u200b",
         value=f"**[➜ 邀請機器人]({url})**　·　**[機器人首頁]({config.HOMEPAGE_URL})**",
         inline=False)
-    embed.set_footer(text="所有指令皆為中文，輸入 / 即可查看")
+    embed.set_footer(text=f"{config.VERSION}　·　所有指令皆為中文，輸入 / 即可查看")
 
     view = discord.ui.View(timeout=None)          # link buttons need no callbacks, so no state to keep
     view.add_item(discord.ui.Button(label="邀請機器人", emoji="➕", style=discord.ButtonStyle.link, url=url))

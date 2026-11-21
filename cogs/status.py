@@ -1,4 +1,5 @@
-"""Rotating bot status that says who is on duty and who is backing up. All in this one file.
+"""Rotating bot status that shows current information (version, servers, members, uptime, latency,
+which host is on duty). All in this one file.
 
 This host is the one connected to Discord, so it is "on duty" ({duty} = its NODE_NAME).
 The other host (learned from the heartbeat in ha.py) is the helper ({backup}). The pool of
@@ -8,11 +9,12 @@ texts changes with the situation:
   BACKUP_DOWN  the other host is not answering
 
 Edit the lists below to change the texts. Each item is (activity type, text). Placeholders:
-{duty} {backup} {servers} {members}. Discord allows about 5 presence updates per 20 seconds,
+{version} {servers} {members} {uptime} {latency} {duty} {backup}. Discord allows about 5 presence updates per 20 seconds,
 so the interval (env STATUS_INTERVAL, default 30 s) must not go below 5. Set STATUS_ROTATION=false to switch it off.
 Cost: one tiny gateway message every STATUS_INTERVAL seconds. No database, no HTTP requests.
 """
 import logging
+import math
 import os
 import random
 import time
@@ -32,70 +34,41 @@ PLAYING = discord.ActivityType.playing
 WATCHING = discord.ActivityType.watching
 LISTENING = discord.ActivityType.listening
 
-SOLO = [
-    (WATCHING,  "{duty} 一個人顧 {servers} 個伺服器，怎樣"),
-    (PLAYING,   "{members} 個人還不夠我忙嗎"),
-    (WATCHING,  "{duty}：有事自己排隊"),
-    (PLAYING,   "沒有替補，因為我不需要"),
-    (LISTENING, "別吵，{duty} 正在摸魚"),
-    (WATCHING,  "{duty} 上班，你們負責活著"),
-    (PLAYING,   "{servers} 個伺服器而已，小事"),
-    (WATCHING,  "{duty}：這點工作也要找人幫？"),
-    (PLAYING,   "{members} 個人，沒一個能幫我"),
-    (LISTENING, "有事找 {duty}，沒事也別找"),
-    (WATCHING,  "{duty} 還沒跑路，珍惜一下"),
-    (PLAYING,   "本機器人目前沒有同事，謝謝"),
-    (WATCHING,  "{duty}：我不是不累，我是不敢停"),
-    (PLAYING,   "免費託管，免費員工，免費受氣"),
-    (LISTENING, "{duty} 已讀不回，請稍後再試"),
+COMMON = [
+    (WATCHING,  "歡迎機器人 {version}"),
+    (WATCHING,  "{servers} 個伺服器"),
+    (WATCHING,  "{members} 位成員"),
+    (PLAYING,   "已運行 {uptime}"),
+    (LISTENING, "延遲 {latency}"),
+    (PLAYING,   "目前主機：{duty}"),
+    (PLAYING,   "輸入 /邀請 取得邀請連結"),
 ]
 
-BACKUP_UP = [
-    (WATCHING,  "{duty} 正在上班，{backup} 正在看戲"),
-    (PLAYING,   "{backup} 在線，出事終於有人陪葬"),
-    (WATCHING,  "{duty} 主班，{backup} 負責裝忙"),
-    (PLAYING,   "{backup}：沒事別叫我，有事再說"),
-    (LISTENING, "{duty} 正在呼叫 {backup}，請勿裝死"),
-    (WATCHING,  "{backup} 已上線，摸魚人數增加一位"),
-    (PLAYING,   "{duty} 顧 {servers} 個伺服器，{backup} 顧心情"),
-    (WATCHING,  "{members} 位成員，兩台主機一起受罪"),
-    (PLAYING,   "{duty} 和 {backup}，誰都別想下班"),
-    (LISTENING, "{backup}，你的待命不是待機"),
-    (WATCHING,  "{duty} 負責工作，{backup} 負責存在"),
-    (PLAYING,   "有替補就是好，至少可以互相甩鍋"),
+SOLO = COMMON
+
+BACKUP_UP = COMMON + [
+    (WATCHING,  "{duty} 使用中，{backup} 待命"),
+    (PLAYING,   "備援主機 {backup} 已上線"),
 ]
 
 OFFLOAD = [
-    (PLAYING,   "{backup} 又被抓去畫圖了"),
-    (WATCHING,  "{duty} 把工作丟給 {backup}，漂亮"),
-    (PLAYING,   "{backup}：不是說好只是待命嗎"),
-    (LISTENING, "{duty} 又在催 {backup} 交圖"),
-    (PLAYING,   "{backup} 正在趕圖，催也沒用"),
-    (WATCHING,  "{duty} 顧伺服器，{backup} 當美術"),
-    (PLAYING,   "{backup} 今天也逃不掉加班"),
-    (LISTENING, "{backup} 正在畫圖，請勿打擾"),
-    (PLAYING,   "{duty}：圖呢？{backup}：快了"),
-    (WATCHING,  "{backup} 的 GPU 正在替大家受苦"),
-    (PLAYING,   "{backup} 出賣算力，換取和平"),
-    (LISTENING, "{duty} 負責催圖，{backup} 負責裝死"),
+    (PLAYING,   "{backup} 正在協助繪製歡迎圖片"),
 ]
 
-BACKUP_DOWN = [
-    (WATCHING,  "{duty} 又要一個人上班了"),
-    (PLAYING,   "{backup} 人呢？人呢？"),
-    (WATCHING,  "{duty} 已經習慣沒有 {backup} 了"),
-    (LISTENING, "{duty} 呼叫 {backup}，無人接聽"),
-    (PLAYING,   "{backup} 是不是又睡著了"),
-    (WATCHING,  "{servers} 個伺服器，全丟給 {duty}"),
-    (PLAYING,   "{members} 個人，{duty} 自己想辦法"),
-    (LISTENING, "{backup} 再不回來就要扣薪了"),
-    (PLAYING,   "{duty}：我真的會謝"),
-    (WATCHING,  "{backup} 的班表是不是排假的"),
-    (PLAYING,   "所謂的備援，就是備著不用"),
-    (LISTENING, "{duty} 正在單方面聯絡 {backup}"),
-    (WATCHING,  "{duty} 一個人扛，{backup} 一個人消失"),
-    (PLAYING,   "備援已失蹤，請勿報警，還在找"),
+BACKUP_DOWN = COMMON + [
+    (WATCHING,  "備援主機 {backup} 離線中"),
 ]
+
+
+def _uptime_text(seconds: float) -> str:
+    minutes = int(seconds // 60)
+    days, rest = divmod(minutes, 1440)
+    hours, mins = divmod(rest, 60)
+    if days:
+        return f"{days} 天 {hours} 小時"
+    if hours:
+        return f"{hours} 小時 {mins} 分"
+    return f"{mins} 分鐘"
 
 
 class StatusCog(commands.Cog, name="Status"):
@@ -129,7 +102,12 @@ class StatusCog(commands.Cog, name="Status"):
             self._mode, self._queue = mode, random.sample(pool, len(pool))
         kind, text = self._queue.pop()
         guilds = self.bot.guilds
-        text = (text.replace("{duty}", config.NODE_NAME)
+        latency = self.bot.latency
+        latency_text = f"{latency * 1000:.0f} ms" if latency is not None and math.isfinite(latency) else "—"
+        text = (text.replace("{version}", config.VERSION)
+                    .replace("{uptime}", _uptime_text(time.time() - config.STARTED_AT))
+                    .replace("{latency}", latency_text)
+                    .replace("{duty}", config.NODE_NAME)
                     .replace("{backup}", ha.peer["name"] or "另一台")
                     .replace("{servers}", str(len(guilds)))
                     .replace("{members}", str(sum(guild.member_count or 0 for guild in guilds))))

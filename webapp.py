@@ -90,7 +90,7 @@ async def _render(request: web.Request) -> web.Response:
 
 def create_app(role: Callable[[], str]) -> web.Application:
     async def status(request: web.Request) -> web.Response:
-        return web.json_response({"node": config.NODE_NAME, "role": role(), "peer": dict(ha.peer)})
+        return web.json_response({"node": config.NODE_NAME, "version": config.VERSION, "role": role(), "peer": dict(ha.peer)})
 
     app = web.Application(client_max_size=MAX_REQUEST_BYTES)
     app.add_routes([web.get("/", _ok), web.get("/health", _ok), web.get("/status", status),

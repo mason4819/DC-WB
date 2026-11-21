@@ -212,6 +212,7 @@ def main() -> None:
     if not config.TOKEN:
         sys.exit("DISCORD_TOKEN is missing. Copy .env.example to .env and add your bot token.")
 
+    log.info("Welcome Bot %s starting", config.VERSION)
     discord.VoiceClient.warn_nacl = False  # voice is not used
     try:
         message = asyncio.run(amain())

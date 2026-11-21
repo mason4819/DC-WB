@@ -1,7 +1,9 @@
-# Welcome Bot（輕量版 ProBot 歡迎系統）
+# Welcome Bot（輕量版 ProBot 歡迎系統）　V2.1
+
+版本號規則：整數是重要更新，小數是小更新（V2.1 → V2.2 → V3.0），每次更新都會調整，更新內容寫在 `CHANGELOG.md`。版本號只在 `config.py` 的 `VERSION` 改一次。
 
 為 **512MB RAM** 主機設計的 Discord 歡迎機器人：歡迎訊息、離開訊息、自動身分組、Pillow 歡迎圖片。
-只使用 Python + discord.py + SQLite + Pillow，沒有大型框架；唯一的定時動作是每 5 秒更換一次機器人狀態（可關閉）。
+只使用 Python + discord.py + SQLite + Pillow，沒有大型框架；定時動作只有更換機器人狀態（預設每 30 秒，可關閉）與狀態紀錄。
 
 ## 1. 功能介紹
 
@@ -251,19 +253,19 @@ Discord 名稱常含花體字、符號、Emoji 或其他語言。程式會：
 **機器人本身需要的權限**：View Channels、Send Messages、Embed Links、Attach Files、Manage Roles。
 **自動身分組**：機器人的最高身分組必須**高於**要發放的身分組。
 
-### 輪播狀態：誰值班、誰補助
+### 輪播狀態：目前資訊
 
-狀態列每 30 秒換一句，文字庫會依情況自動切換（四組都在 `cogs/status.py` 最上方，可直接改字）：
+狀態列每 30 秒換一句，顯示目前資訊：版本號、伺服器數、成員數、運行時間、延遲、目前主機；有設定備援主機時還會顯示備援狀態。文字庫依情況自動切換（都在 `cogs/status.py` 最上方，可直接改字）：
 
 | 情況 | 使用的文字庫 | 例子 |
 | --- | --- | --- |
-| 沒有設定對方主機 | `SOLO` | `render 一個人顧 2 個伺服器，怎樣` |
-| 兩台都在 | `BACKUP_UP` | `render 正在上班，wispbyte 正在看戲` |
-| 對方正在幫忙畫圖 | `BACKUP_UP` 再加上 `OFFLOAD` | `wispbyte 又被抓去畫圖了` |
-| 對方沒上線 | `BACKUP_DOWN` | `render 呼叫 wispbyte，無人接聽` |
+| 沒有設定對方主機 | `SOLO` | `歡迎機器人 V2.1`、`2 個伺服器`、`延遲 48 ms` |
+| 兩台都在 | `BACKUP_UP` | `render 使用中，wispbyte 待命` |
+| 對方正在幫忙畫圖 | `BACKUP_UP` 再加上 `OFFLOAD` | `wispbyte 正在協助繪製歡迎圖片` |
+| 對方沒上線 | `BACKUP_DOWN` | `備援主機 wispbyte 離線中` |
 
 - 「值班」就是目前連著 Discord 的這台，名字取自它的 `NODE_NAME`；「補助」是對方主機，名字由兩台互相檢查時自動得知，不用另外設定。換手後狀態會自己對調。
-- 想改文字：打開 `cogs/status.py`，編輯最上方的 `SOLO`、`BACKUP_UP`、`OFFLOAD`、`BACKUP_DOWN` 清單；一輪內每句只出現一次，唱完一輪才會重新洗牌。類型有 `PLAYING`（正在玩）、`WATCHING`（正在看）、`LISTENING`（正在聽）；可用變數 `{duty}` `{backup}` `{servers}` `{members}`。
+- 想改文字：打開 `cogs/status.py`，編輯最上方的 `SOLO`、`BACKUP_UP`、`OFFLOAD`、`BACKUP_DOWN` 清單；一輪內每句只出現一次，唱完一輪才會重新洗牌。類型有 `PLAYING`（正在玩）、`WATCHING`（正在看）、`LISTENING`（正在聽）；可用變數 `{version}` `{servers}` `{members}` `{uptime}` `{latency}` `{duty}` `{backup}`。
 - 間隔由環境變數 `STATUS_INTERVAL` 控制（預設 30 秒），Discord 限制約 20 秒內 5 次更新，**不要低於 5 秒**。機器人帳號無法使用「自訂狀態」的表情符號欄位，所以表情符號直接寫在文字裡。
 - 想關掉：設定環境變數 `STATUS_ROTATION=false`。
 
